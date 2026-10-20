@@ -1,0 +1,72 @@
+{
+  "name": "murmuration",
+  "version": "0.0.0",
+  "private": true,
+  "description": "A local, read-only 3D observatory for your X/Twitter history: search, cluster, and understand your tweets, likes, followers, and relationships over time.",
+  "license": "MIT",
+  "author": "Travis Fischer <travis@transitivebullsh.it>",
+  "repository": "https://github.com/transitive-bullshit/murmuration",
+  "type": "module",
+  "scripts": {
+    "dev": "portless run vite --configLoader runner",
+    "build": "vite build --configLoader runner",
+    "preview": "vite preview --configLoader runner",
+    "analyze": "tsx scripts/analyze.ts",
+    "test": "run-s test:*",
+    "test:format": "oxfmt --check",
+    "test:lint": "oxlint",
+    "test:types": "tsc --noEmit",
+    "test:unit": "vitest run",
+    "lint": "oxlint",
+    "typecheck": "pnpm test:types",
+    "fix": "run-s fix:*",
+    "fix:format": "oxfmt",
+    "fix:lint": "oxlint --fix"
+  },
+  "dependencies": {
+    "@react-three/drei": "^10.7.9",
+    "@react-three/fiber": "^9.8.2",
+    "@react-three/postprocessing": "^3.2.0",
+    "maath": "^0.10.8",
+    "motion": "^14.4.0",
+    "postprocessing": "^6.39.5",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "three": "^0.186.1",
+    "zustand": "^5.0.15"
+  },
+  "devDependencies": {
+    "@fisch0920/config": "^2.4.0",
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/node": "^26.6.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@types/three": "^0.186.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "lint-staged": "^17.6.0",
+    "npm-run-all2": "^9.0.3",
+    "oxfmt": "^0.73.0",
+    "oxlint": "^1.88.0",
+    "oxlint-tsgolint": "^7.0.2004",
+    "portless": "^0.15.8",
+    "simple-git-hooks": "^2.14.0",
+    "tailwindcss": "^4.3.3",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.4",
+    "vitest": "^5.0.5"
+  },
+  "simple-git-hooks": {
+    "pre-commit": "npx lint-staged"
+  },
+  "lint-staged": {
+    "*.{ts,tsx}": [
+      "oxfmt --no-error-on-unmatched-pattern",
+      "oxlint --fix"
+    ]
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "packageManager": "pnpm@12.11.2"
+}

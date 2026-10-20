@@ -1,0 +1,155 @@
+@import 'tailwindcss';
+
+@theme {
+  --font-sans:
+    ui-sans-serif, -apple-system, 'SF Pro Text', 'Inter', system-ui, sans-serif;
+  --font-display:
+    ui-sans-serif, -apple-system, 'SF Pro Display', 'Inter Display', 'Inter',
+    system-ui, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, monospace;
+
+  --color-ink: #f3f2ee;
+  --color-ink-2: #b9b8b1;
+  --color-ink-3: #7c7b75;
+  --color-ink-4: #4d4c48;
+  --color-void: #030406;
+  --color-glass: rgb(18 19 24 / 0.58);
+  --color-glass-strong: rgb(16 17 22 / 0.82);
+  --color-hairline: rgb(255 255 255 / 0.08);
+  --color-hairline-strong: rgb(255 255 255 / 0.14);
+
+  /* categorical slots (dark steps, fixed order) */
+  --color-s1: #3987e5;
+  --color-s2: #d95926;
+  --color-s3: #199e70;
+  --color-s4: #c98500;
+  --color-s5: #d55181;
+  --color-s6: #008300;
+  --color-s7: #9085e9;
+  --color-s8: #e66767;
+
+  --color-mine: #d95926;
+  --color-like: #3987e5;
+  --color-gold: #ffd59a;
+
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+:root {
+  color-scheme: dark;
+  background: var(--color-void);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: var(--color-void);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+::selection {
+  background: rgb(255 213 154 / 0.3);
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
+}
+
+/* Frosted glass surface used by every floating panel. */
+.glass {
+  background: linear-gradient(
+    180deg,
+    rgb(28 29 36 / 0.62),
+    rgb(14 15 19 / 0.7)
+  );
+  backdrop-filter: blur(22px) saturate(140%);
+  -webkit-backdrop-filter: blur(22px) saturate(140%);
+  border: 1px solid var(--color-hairline);
+  box-shadow:
+    0 1px 0 0 rgb(255 255 255 / 0.05) inset,
+    0 24px 60px -24px rgb(0 0 0 / 0.75),
+    0 2px 10px -4px rgb(0 0 0 / 0.5);
+}
+
+.glass-strong {
+  background: linear-gradient(
+    180deg,
+    rgb(26 27 33 / 0.86),
+    rgb(12 13 17 / 0.9)
+  );
+  backdrop-filter: blur(28px) saturate(150%);
+  -webkit-backdrop-filter: blur(28px) saturate(150%);
+  border: 1px solid var(--color-hairline);
+  box-shadow:
+    0 1px 0 0 rgb(255 255 255 / 0.06) inset,
+    0 30px 80px -30px rgb(0 0 0 / 0.85);
+}
+
+.pressable {
+  transition:
+    transform 160ms var(--ease-out),
+    background-color 160ms ease,
+    color 160ms ease,
+    opacity 160ms ease;
+}
+.pressable:active {
+  transform: scale(0.97);
+}
+
+.eyebrow {
+  font-size: 10.5px;
+  line-height: 1;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-ink-3);
+  font-weight: 600;
+}
+
+.scroll-quiet {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(255 255 255 / 0.12) transparent;
+}
+
+/* In-scene labels rendered through drei <Html>. */
+.scene-label {
+  pointer-events: none;
+  user-select: none;
+  white-space: nowrap;
+  transform: translate3d(-50%, -50%, 0);
+  font-family: var(--font-sans);
+}
+
+.fade-in {
+  animation: fade-in 420ms var(--ease-out) both;
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fade-in {
+    animation: fade-only 200ms ease both;
+  }
+  @keyframes fade-only {
+    from {
+      opacity: 0;
+    }
+  }
+}
