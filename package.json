@@ -3,6 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "description": "A local, read-only 3D observatory for your X/Twitter history: search, cluster, and understand your tweets, likes, followers, and relationships over time.",
+  "homepage": "https://murmuration.transitivebullsh.it",
   "license": "MIT",
   "author": "Travis Fischer <travis@transitivebullsh.it>",
   "repository": "https://github.com/transitive-bullshit/murmuration",

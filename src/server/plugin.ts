@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import path from 'node:path'
 import { gunzipSync } from 'node:zlib'
@@ -12,6 +13,16 @@ import {
   requireExport,
   staleReason
 } from './exporter'
+import {
+  describeSite,
+  escapeHtml,
+  headTags,
+  llmsTxt,
+  resolveOrigin,
+  robotsTxt,
+  sitemapXml,
+  type Site
+} from './site'
 
 type Next = (err?: unknown) => void
 
@@ -32,6 +43,30 @@ export function murmurationData(): Plugin {
   let snapshot: ExportStore | undefined
   let published: Buffer | undefined
   let base = '/'
+  let root = process.cwd()
+  let site: Site | undefined
+
+  // Page metadata, robots.txt, sitemap.xml and llms.txt come from the export.
+  const describe = (): Site => {
+    if (site) return site
+    const ds = JSON.parse(published!.toString('utf8'))
+    const pkg = JSON.parse(
+      readFileSync(path.join(root, 'package.json'), 'utf8')
+    ) as { homepage?: string; repository?: string | { url?: string } }
+    const origin = resolveOrigin(process.env, pkg.homepage)
+    if (!origin)
+      console.warn(
+        '[murmuration] no site URL (set SITE_URL or package.json "homepage"): share images need absolute URLs, and sitemap.xml is skipped'
+      )
+    const repository =
+      typeof pkg.repository === 'string' ? pkg.repository : pkg.repository?.url
+    site = describeSite(ds, {
+      origin,
+      repository: repository?.replace(/^git\+/, '').replace(/\.git$/, ''),
+      datasetBytes: published!.byteLength
+    })
+    return site
+  }
 
   const handler = async (
     req: IncomingMessage,
@@ -98,6 +133,7 @@ export function murmurationData(): Plugin {
     },
     configResolved(config) {
       base = config.base
+      root = config.root
       loadLocalEnv(config.root)
       store = new DatasetStore(path.join(config.root, '.cache'))
       snapshot = new ExportStore(config.root, store)
@@ -108,29 +144,41 @@ export function murmurationData(): Plugin {
       if (!snapshot?.available()) void store?.ensure()
       server.middlewares.use((req, res, next) => void handler(req, res, next))
     },
-    transformIndexHtml() {
+    transformIndexHtml(html) {
       if (!published) return
-      // Start downloading the data alongside the app's own scripts.
-      return [
-        {
-          tag: 'link',
-          attrs: {
-            rel: 'preload',
-            href: `${base}${EXPORT_FILE}`,
-            as: 'fetch',
-            crossorigin: true
+      const info = describe()
+      return {
+        html: html.replace(
+          /<title>[^<]*<\/title>/,
+          `<title>${escapeHtml(info.title)}</title>`
+        ),
+        tags: [
+          // Start downloading the data alongside the app's own scripts.
+          {
+            tag: 'link',
+            attrs: {
+              rel: 'preload',
+              href: `${base}${EXPORT_FILE}`,
+              as: 'fetch',
+              crossorigin: true
+            },
+            injectTo: 'head'
           },
-          injectTo: 'head'
-        }
-      ]
+          ...headTags(info)
+        ]
+      }
     },
     generateBundle() {
-      if (published)
-        this.emitFile({
-          type: 'asset',
-          fileName: EXPORT_FILE,
-          source: published
-        })
+      if (!published) return
+      this.emitFile({ type: 'asset', fileName: EXPORT_FILE, source: published })
+      const info = describe()
+      const files: Record<string, string | undefined> = {
+        'robots.txt': robotsTxt(info),
+        'sitemap.xml': sitemapXml(info),
+        'llms.txt': llmsTxt(info)
+      }
+      for (const [fileName, source] of Object.entries(files))
+        if (source) this.emitFile({ type: 'asset', fileName, source })
     }
   }
 }

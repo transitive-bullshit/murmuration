@@ -91,6 +91,8 @@ pnpm deploy:vercel
 
 That runs `pnpm export`, `vercel pull`, `vercel build --prod` and `vercel deploy --prebuilt --prod`. `vercel.json` turns off Git-triggered deploys (`git.deploymentEnabled: false`): a build on Vercel's servers has no data and would fail. `.vercelignore` keeps `.env` and `.cache/` out of uploads. To keep the site private, turn on Deployment Protection in the Vercel project settings.
 
+The build also writes the site's metadata from the export (`src/server/site.ts`): title and description, canonical link, Open Graph and X card tags, JSON-LD (site, author, app, source and dataset), a no-JavaScript fallback, `robots.txt`, `sitemap.xml` and [`llms.txt`](https://llmstxt.org). Absolute URLs use `SITE_URL`, else Vercel's production domain, else `homepage` in `package.json`; deploying your own copy, change `homepage`. The share image `public/og.jpg` (1200×630 JPEG) is a screenshot of the constellation; replace it with one of your own.
+
 ## Common tasks
 
 - **Change analytics:** edit `src/server/*`, bump `PIPELINE_REVISION` in `src/server/cache.ts`, then run `pnpm export --force` (or `pnpm analyze --force` if you don't use an export).
@@ -110,6 +112,7 @@ src/client/data/        dataset loading, typed model, colors, formatting
 src/client/layouts/     pure layout functions per view
 src/client/gl/          particle shader/field, camera, picking, overlays, effects
 src/client/ui/          panels, top bar, timeline, cards
+public/                 favicon, share image (og.jpg), apple-touch-icon
 scripts/export.ts       CLI for the full pipeline → data/dataset.json
 scripts/analyze.ts      CLI for building the cache
 data/                   the export (gitignored)
