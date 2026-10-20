@@ -9,6 +9,9 @@ import { gunzipSync } from 'node:zlib'
 
 import type { Dataset } from '../src/shared/types'
 import { DatasetStore } from '../src/server/cache'
+import { loadLocalEnv } from '../src/server/env'
+
+loadLocalEnv(path.resolve(import.meta.dirname, '..'))
 
 const force = process.argv.includes('--force')
 const store = new DatasetStore(

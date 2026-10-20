@@ -10,8 +10,159 @@ const MENTION_RE = /(^|[^\p{L}\p{N}_])@[a-z0-9_]+/giu
 const HASHTAG_RE = /(^|[^\p{L}\p{N}_&])#([\p{L}\p{N}_]+)/gu
 const POSSESSIVE_RE = /(\p{L})['’‘`]s\b/gu
 const APOSTROPHE_RE = /['’‘`]/gu
-// "soooo" → "so", "yesss" → "yes": collapse runs of 3+ letters to one.
+// "soooo" → "so", "yesss" → "yes": collapse runs of 3+ letters to one…
 const ELONGATED_RE = /(\p{L})\1{2,}/gu
+const HAS_ELONGATION_RE = /(\p{L})\1{2}/u
+const WORD_RE = /\p{L}+/gu
+// …unless two letters spell a common word: "hellll" → "hell", not "hel",
+// and "goooood" → "good", not "god".
+const DOUBLED_WORDS: ReadonlySet<string> = new Set([
+  'add',
+  'agree',
+  'all',
+  'ball',
+  'beer',
+  'bill',
+  'book',
+  'boom',
+  'call',
+  'cheers',
+  'coffee',
+  'cook',
+  'cool',
+  'deep',
+  'door',
+  'fall',
+  'feel',
+  'fill',
+  'food',
+  'free',
+  'full',
+  'good',
+  'hell',
+  'keep',
+  'kill',
+  'look',
+  'meet',
+  'mood',
+  'moon',
+  'need',
+  'off',
+  'pass',
+  'poor',
+  'pull',
+  'see',
+  'sleep',
+  'small',
+  'soon',
+  'still',
+  'stuff',
+  'sweet',
+  'tall',
+  'three',
+  'too',
+  'wall',
+  'week',
+  'well',
+  'will',
+  'wood',
+  'yall',
+  'zoom'
+])
+// Words that describe how an image looks rather than what it's about
+// ("a bearded man sits beneath a peach sky"); kept out of caption terms so
+// topic labels name subjects, not composition.
+const CAPTION_FILLER: ReadonlySet<string> = new Set([
+  'appears',
+  'background',
+  'bearded',
+  'beige',
+  'beneath',
+  'behind',
+  'beside',
+  'black',
+  'blue',
+  'bottom',
+  'bright',
+  'brown',
+  'caption',
+  'center',
+  'close',
+  'closeup',
+  'colorful',
+  'dark',
+  'depicting',
+  'depicts',
+  'displayed',
+  'displaying',
+  'featuring',
+  'foreground',
+  'graphic',
+  'gray',
+  'green',
+  'grey',
+  'holding',
+  'illustration',
+  'image',
+  'labeled',
+  'large',
+  'left',
+  'light',
+  'looking',
+  'lying',
+  'man',
+  'men',
+  'middle',
+  'near',
+  'orange',
+  'peach',
+  'people',
+  'person',
+  'photo',
+  'photograph',
+  'picture',
+  'pink',
+  'purple',
+  'reads',
+  'red',
+  'right',
+  'scene',
+  'screen',
+  'screenshot',
+  'shot',
+  'showing',
+  'shown',
+  'shows',
+  'sits',
+  'sitting',
+  'small',
+  'smiling',
+  'stand',
+  'standing',
+  'stands',
+  'text',
+  'titled',
+  'top',
+  'visible',
+  'wearing',
+  'white',
+  'woman',
+  'women',
+  'yellow'
+])
+
+function deElongate(word: string): string {
+  if (!HAS_ELONGATION_RE.test(word)) return word
+  const two = word.replace(ELONGATED_RE, '$1$1')
+  return DOUBLED_WORDS.has(two) ? two : word.replace(ELONGATED_RE, '$1')
+}
+
+/** An image caption minus its visual filler words, for topic terms. */
+export function captionTerms(caption: string): string {
+  return caption.replace(WORD_RE, (word) =>
+    CAPTION_FILLER.has(word.toLowerCase()) ? BREAK : word
+  )
+}
 const TOKEN_RE = /[\p{L}\p{N}\p{M}]+(?:[-.][\p{L}\p{N}\p{M}]+)*/gu
 const GAP_RE = /^\s*$/u
 
@@ -67,7 +218,7 @@ export function cleanText(text: string): string {
     .replace(HASHTAG_RE, `$1${BREAK}$2${BREAK}`)
     .replace(POSSESSIVE_RE, '$1')
     .replace(APOSTROPHE_RE, '')
-    .replace(ELONGATED_RE, '$1')
+    .replace(WORD_RE, deElongate)
 }
 
 /**

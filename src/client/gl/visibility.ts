@@ -31,7 +31,8 @@ export function useTweetVisibility(model: Model) {
     for (let i = 0; i < n; i++) {
       if (!kinds[kind[i]!]) vis[i] = VIS.hidden
       else if (range && (t[i]! < range[0] || t[i]! > range[1]))
-        vis[i] = q ? VIS.hidden : VIS.dim * 0.6
+        // Strata hides other periods outright; elsewhere they stay as a ghost.
+        vis[i] = q || view === 'strata' ? VIS.hidden : VIS.dim * 0.4
     }
     if (focusCluster !== undefined && !q) {
       for (let i = 0; i < n; i++) {
@@ -48,7 +49,7 @@ export function useTweetVisibility(model: Model) {
       for (const c of focus.causes)
         if (c.tweet >= 0) vis[c.tweet] = VIS.highlight
     }
-    const key = `${query}|${kinds.join()}|${range?.join() ?? ''}|${focus?.id ?? ''}|${focusCluster ?? ''}`
+    const key = `${query}|${kinds.join()}|${range?.join() ?? ''}|${range ? view : ''}|${focus?.id ?? ''}|${focusCluster ?? ''}`
     return { vis, key, matches }
   }, [model, kinds, range, query, matches, focusId, view, focusCluster])
 }

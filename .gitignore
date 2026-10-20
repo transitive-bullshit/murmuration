@@ -54,5 +54,8 @@ local.env
 # derived analytics cache (built from your local Birdclaw archive; private)
 /.cache
 
+# the publishable snapshot from `pnpm export` (DM text stripped); deployed, not committed
+/data
+
 # local agent/editor launch configs
 /.claude

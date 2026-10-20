@@ -2,13 +2,15 @@ import { beforeAll, describe, expect, it } from 'vitest'
 
 import {
   buildSemanticMap,
+  captionTerms,
   extractTerms,
   tokenize,
   type SemanticResult
 } from '../src/server/semantic'
 import { labelClusters } from '../src/server/semantic/labels'
+import { cleanText } from '../src/server/semantic/tokenize'
 import { clusterAnchors } from '../src/server/semantic/layout'
-import { mulberry32 } from '../src/server/semantic/random'
+import { gaussian, mulberry32 } from '../src/server/semantic/random'
 import type { Csr } from '../src/server/semantic/sparse'
 
 const TOPICS = {
@@ -154,6 +156,13 @@ function purity(result: SemanticResult, topics: Topic[]): number {
   return majority / total
 }
 
+function clusteredShare(result: SemanticResult, count: number): number {
+  return (
+    Array.from(result.cluster.subarray(0, count)).filter((c) => c >= 0).length /
+    count
+  )
+}
+
 function majorityTopic(
   result: SemanticResult,
   topics: Topic[],
@@ -206,6 +215,26 @@ describe('tokenizer', () => {
     expect(terms).not.toContain('source galaxy')
     expect(terms).not.toContain('brain black')
     expect(terms).not.toContain('state art')
+  })
+
+  it('collapses elongated words without mangling double letters', () => {
+    expect(cleanText('soooo goooood, yesss, hellll yeah, so cooool')).toBe(
+      'so good, yes, hell yeah, so cool'
+    )
+  })
+
+  it('drops visual filler from image captions', () => {
+    expect(
+      tokenize(
+        captionTerms(
+          'A bearded man sits beneath a peach sky beside a rocket launch tower.'
+        )
+      )
+    ).toEqual(['sky', 'rocket', 'launch', 'tower'])
+    // Filler never bridges a bigram.
+    expect(extractTerms(captionTerms('rocket sits launch'))).not.toContain(
+      'rocket launch'
+    )
   })
 
   it('keeps model names and folds js suffixes', () => {
@@ -283,7 +312,10 @@ describe('buildSemanticMap', () => {
 
   it('keeps purity with the default k', async () => {
     const auto = await buildSemanticMap(texts)
-    expect(auto.clusters.length).toBe(12)
+    // k-means splits each topic; refinement may dissolve a sliver.
+    expect(auto.clusters.length).toBeGreaterThanOrEqual(8)
+    expect(auto.clusters.length).toBeLessThanOrEqual(12)
+    expect(clusteredShare(auto, texts.length)).toBeGreaterThan(0.9)
     expect(purity(auto, topics)).toBeGreaterThan(0.95)
   })
 
@@ -305,8 +337,8 @@ describe('buildSemanticMap', () => {
     expect(Math.max(...radii)).toBeLessThan(3)
 
     for (let i = texts.length; i < n; i++) expect(result.cluster[i]).toBe(-1)
-    for (let i = 0; i < texts.length; i++)
-      expect(result.cluster[i]).toBeGreaterThanOrEqual(0)
+    // Clean synthetic topics: almost nothing is left as an outlier.
+    expect(clusteredShare(result, texts.length)).toBeGreaterThan(0.97)
 
     const { clusters } = result
     expect(clusters.map((c) => c.id)).toEqual(clusters.map((_, i) => i))
@@ -372,5 +404,52 @@ describe('layout stability', () => {
     centroids[d + 1] = Math.sin(0.25)
     const anchors = clusterAnchors(centroids, 2, d, mulberry32(1))
     expect(Array.from(anchors).every(Number.isFinite)).toBe(true)
+  })
+})
+
+describe('buildSemanticMap with precomputed embeddings', () => {
+  it('clusters by the vectors and leaves misfits unclustered', async () => {
+    const { texts, topics } = syntheticCorpus(150, 11)
+    const dim = 160 // above the PCA threshold, so the reduction path runs too
+    const rng = mulberry32(5)
+    const unit = (v: Float32Array) => v.map((x) => x / Math.hypot(...v))
+    const centers = TOPIC_NAMES.map(() =>
+      unit(Float32Array.from({ length: dim }, () => gaussian(rng)))
+    )
+    const outliers = 30
+    const n = texts.length + outliers
+    const vectors = new Float32Array(n * dim)
+    texts.forEach((_, i) => {
+      const center = centers[TOPIC_NAMES.indexOf(topics[i]!)]!
+      vectors.set(unit(center.map((c) => c + 0.06 * gaussian(rng))), i * dim)
+    })
+    for (let i = texts.length; i < n; i++)
+      vectors.set(
+        unit(Float32Array.from({ length: dim }, () => gaussian(rng))),
+        i * dim
+      )
+    const allTexts = [
+      ...texts,
+      ...Array.from({ length: outliers }, () => 'random musings')
+    ]
+    // A few tweets whose embedding request failed: imputed from TF-IDF neighbors.
+    const failedEmbeddings = [3, 77, 200, 401, 555]
+    for (const i of failedEmbeddings) vectors.fill(0, i * dim, (i + 1) * dim)
+
+    const result = await buildSemanticMap(allTexts, { vectors, dim, k: 4 })
+    expect(result.clusters).toHaveLength(4)
+    expect(purity(result, topics)).toBeGreaterThan(0.95)
+    expect(clusteredShare(result, texts.length)).toBeGreaterThan(0.9)
+    const strays = Array.from(result.cluster.subarray(texts.length)).filter(
+      (c) => c < 0
+    ).length
+    expect(strays / outliers).toBeGreaterThan(0.6)
+    expect(result.coords.every(Number.isFinite)).toBe(true)
+    expect(result.timings.reducing).toBeGreaterThanOrEqual(0)
+    const imputedOk = failedEmbeddings.filter((i) => {
+      const c = result.cluster[i]!
+      return c >= 0 && majorityTopic(result, topics, c) === topics[i]
+    })
+    expect(imputedOk.length).toBeGreaterThanOrEqual(4)
   })
 })

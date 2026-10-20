@@ -25,28 +25,34 @@ interface Acc {
   >
 }
 
-const WEIGHTS = { reply: 1, mention: 0.6, share: 0.8, like: 0.3 }
+const WEIGHTS = { reply: 1, mention: 0.5, share: 0.8, like: 0.6 }
 
-/** One person's mutual-engagement score from interaction counts. */
+// Interactions fade with a ~1 year half-life, so closeness reflects the
+// relationship now rather than its lifetime total.
+const TAU_YEARS = 1.5
+const QUARTER_DECAY = Math.exp(-0.25 / TAU_YEARS)
+
+/**
+ * One person's closeness from (recency-decayed) interaction volumes:
+ * - public engagement in *both* directions dominates: a geometric mean, so
+ *   it is zero unless they also replied to or mentioned you;
+ * - your one-sided attention (replies, mentions, likes, reposts) counts less;
+ * - DMs count least, and only the two-way part (`dm` = min of in/out);
+ * - a mutual follow adds a little.
+ */
 export function closenessScore(c: {
   out: number
   in: number
-  dmIn: number
-  dmOut: number
-  mutualFollow: boolean
+  dm: number
+  follower: boolean
+  following: boolean
 }): number {
-  // Conversations count only to the extent they're two-sided, so one-way DM
-  // floods (spam, newsletters) don't read as closeness.
-  const dmMutual =
-    Math.min(c.dmIn, c.dmOut) * 2 +
-    Math.min(c.dmIn, c.dmOut, Math.max(c.dmIn, c.dmOut) * 0.1)
+  const mutualPublic = Math.sqrt(Math.log1p(c.out) * Math.log1p(2 * c.in))
   return (
-    Math.log1p(c.out) +
-    1.2 * Math.log1p(c.in) +
-    1.4 * Math.log1p(dmMutual) +
-    (c.mutualFollow ? 0.6 : 0) +
-    // Reward reciprocity across channels.
-    (c.out > 0 && (c.in > 0 || dmMutual > 0) ? 0.5 : 0)
+    1.6 * mutualPublic +
+    0.45 * Math.log1p(c.out) +
+    0.35 * Math.log1p(c.dm) +
+    (c.follower && c.following ? 0.4 : c.follower ? 0.1 : 0)
   )
 }
 
@@ -131,20 +137,52 @@ export function buildPeople(args: {
   acc.delete(self)
 
   const list = [...acc.values()]
-  const raw = list.map((a) =>
-    closenessScore({
-      out:
-        a.outReplies * WEIGHTS.reply +
-        a.outMentions * WEIGHTS.mention +
-        a.outShares * WEIGHTS.share +
-        a.outLikes * WEIGHTS.like,
-      in: a.inMentions,
-      dmIn: a.dmIn,
-      dmOut: a.dmOut,
-      mutualFollow:
-        (a.rel & (REL.follower | REL.following)) ===
-        (REL.follower | REL.following)
+
+  // Quarterly, recency-decayed closeness for everyone who interacted; the
+  // latest quarter is their closeness now.
+  const quarters: number[] = []
+  for (
+    let q = quarterStart(archive.account.createdAt);
+    q <= args.end;
+    q = nextQuarter(q)
+  )
+    quarters.push(q)
+  const trajectory = (a: Acc): Float64Array => {
+    const row = new Float64Array(quarters.length)
+    const fAt = followedAt.get(a.profileId) ?? 0
+    const gAt = followingAt.get(a.profileId) ?? 0
+    let out = 0
+    let inn = 0
+    let dm = 0
+    quarters.forEach((q, k) => {
+      const b = a.quarters.get(q)
+      out = out * QUARTER_DECAY + (b?.out ?? 0)
+      inn = inn * QUARTER_DECAY + (b?.in ?? 0)
+      dm = dm * QUARTER_DECAY + Math.min(b?.dmIn ?? 0, b?.dmOut ?? 0)
+      const qEnd = quarters[k + 1] ?? args.end
+      row[k] = closenessScore({
+        out,
+        in: inn,
+        dm,
+        follower: !!(a.rel & REL.follower) && fAt <= qEnd,
+        following: !!(a.rel & REL.following) && gAt <= qEnd
+      })
     })
+    return row
+  }
+  const followOnly = (a: Acc) =>
+    closenessScore({
+      out: 0,
+      in: 0,
+      dm: 0,
+      follower: !!(a.rel & REL.follower),
+      following: !!(a.rel & REL.following)
+    })
+  const trajectories = list.map((a) =>
+    a.quarters.size > 0 ? trajectory(a) : undefined
+  )
+  const raw = list.map(
+    (a, i) => trajectories[i]?.[quarters.length - 1] ?? followOnly(a)
   )
   const maxRaw = Math.max(1e-6, ...raw)
 
@@ -205,51 +243,23 @@ export function buildPeople(args: {
     people.outlierReason.push(reason)
   })
 
-  // Quarterly closeness for the people who matter most --------------------
-  const quarters: number[] = []
-  for (
-    let q = quarterStart(archive.account.createdAt);
-    q <= args.end;
-    q = nextQuarter(q)
-  )
-    quarters.push(q)
+  // Store the quarterly timeline for the people who were ever closest, so
+  // time travel can show relationships that have since faded.
   const ranked = list
-    .map((a, i) => ({ a, i, c: people.closeness[i]! }))
-    .filter((x) => x.a.quarters.size > 0)
-    .sort((x, y) => y.c - x.c)
+    .map((_, i) => ({
+      i,
+      peak: trajectories[i] ? Math.max(...trajectories[i]) : 0
+    }))
+    .filter((x) => x.peak > 0)
+    .sort((x, y) => y.peak - x.peak)
     .slice(0, 800)
-
-  const qRaw = ranked.map(({ a }) => {
-    // Interactions decay over ~a year so the orbit shows momentum, not totals.
-    const row = Array.from({ length: quarters.length }, () => 0)
-    let out = 0
-    let inn = 0
-    let dmIn = 0
-    let dmOut = 0
-    quarters.forEach((q, k) => {
-      const b = a.quarters.get(q)
-      out = out * 0.7 + (b?.out ?? 0)
-      inn = inn * 0.7 + (b?.in ?? 0)
-      dmIn = dmIn * 0.7 + (b?.dmIn ?? 0)
-      dmOut = dmOut * 0.7 + (b?.dmOut ?? 0)
-      const qEnd = quarters[k + 1] ?? args.end
-      const fAt = followedAt.get(a.profileId) ?? Infinity
-      const gAt = followingAt.get(a.profileId) ?? Infinity
-      row[k] = closenessScore({
-        out,
-        in: inn,
-        dmIn,
-        dmOut,
-        mutualFollow: fAt < qEnd && gAt < qEnd
-      })
-    })
-    return row
-  })
-  const qMax = Math.max(1e-6, ...qRaw.flat())
+  const qMax = Math.max(1e-6, ...ranked.map((x) => x.peak))
   const timeline: PeopleTimeline = {
     t: quarters,
     people: ranked.map((x) => x.i),
-    closeness: qRaw.flat().map((v) => round3(Math.pow(v / qMax, 0.85)))
+    closeness: ranked.flatMap((x) =>
+      Array.from(trajectories[x.i]!, (v) => round3(Math.pow(v / qMax, 0.85)))
+    )
   }
 
   return { people, timeline, indexOf }

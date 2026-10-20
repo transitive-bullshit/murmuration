@@ -1,9 +1,12 @@
 import { QuadraticBezierLine } from '@react-three/drei'
-import { useMemo, type ReactNode } from 'react'
+import { useFrame } from '@react-three/fiber'
+import { useEffect, useMemo, useRef, type ReactNode } from 'react'
+import * as THREE from 'three'
 
-import { fmtCompact, fmtMonth } from '../data/format'
+import { displayText, fmtCompact, fmtMonth } from '../data/format'
 import { TIME_WIDTH, type Model } from '../data/model'
 import type { AnatomyStats } from '../layouts/anatomy'
+import { BANGER_HEIGHT, OUTLIER_CAP, type Bangers } from '../layouts/bangers'
 import {
   ENG_HEIGHT,
   FOLLOWERS_BASE,
@@ -730,4 +733,146 @@ function niceTicks(max: number): number[] {
   const ticks: number[] = []
   for (let v = 0; v <= max; v += nice) ticks.push(v)
   return ticks
+}
+
+/**
+ * Bangers — a lollipop chart through time: every standout tweet glows at the
+ * top of a stem of light; the very best carry an excerpt label.
+ */
+export function BangersOverlay({
+  model,
+  bangers
+}: {
+  model: Model
+  bangers: Bangers
+}) {
+  const flyTo = useApp((s) => s.flyTo)
+  const engagement = bangers.mode === 'engagement'
+  const stems = useRef<THREE.LineSegments>(null)
+  const age = useRef(0)
+
+  const geometry = useMemo(() => {
+    const pos = new Float32Array(bangers.tops.length * 6)
+    const col = new Float32Array(bangers.tops.length * 6)
+    bangers.tops.forEach(([x, y, z], k) => {
+      pos.set([x, 0, z, x, y, z], k * 6)
+      const heat = 1 - k / Math.max(1, bangers.tops.length)
+      const top = [1, 0.78 + heat * 0.15, 0.5 + heat * 0.35].map(
+        (v) => v * (0.35 + heat * 0.65)
+      )
+      col.set([0, 0, 0, top[0]!, top[1]!, top[2]!], k * 6)
+    })
+    const g = new THREE.BufferGeometry()
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3))
+    g.setAttribute('color', new THREE.BufferAttribute(col, 3))
+    return g
+  }, [bangers])
+  const material = useMemo(
+    () =>
+      new THREE.LineBasicMaterial({
+        vertexColors: true,
+        transparent: true,
+        opacity: 0.55,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        toneMapped: false
+      }),
+    []
+  )
+  useEffect(() => () => geometry.dispose(), [geometry])
+  useEffect(() => () => material.dispose(), [material])
+  useEffect(() => {
+    age.current = 0
+  }, [bangers])
+
+  // Stems grow up out of the floor once the particles have flown in.
+  useFrame((_, dt) => {
+    age.current += dt
+    const t = Math.min(1, Math.max(0, (age.current - 0.9) / 1.4))
+    const e = 1 - (1 - t) ** 3
+    if (stems.current) stems.current.scale.y = Math.max(0.0001, e)
+  })
+
+  const ticks = engagement
+    ? logTicks(Math.log10(10 ** bangers.maxLogEng)).filter((v) => v >= 10)
+    : [2, 4, 6, 8, 10].filter((v) => v <= OUTLIER_CAP)
+  const yOf = (v: number) =>
+    engagement
+      ? (Math.log10(v + 1) / bangers.maxLogEng) * BANGER_HEIGHT
+      : (v / OUTLIER_CAP) * BANGER_HEIGHT * 0.96 + 0.04 * BANGER_HEIGHT
+
+  const items = useMemo<SceneLabel[]>(() => {
+    const labels: SceneLabel[] = [
+      ...yearLabels(model, 0, 1.2),
+      ...ticks.map((v) =>
+        label(
+          `t${v}`,
+          [X0 - 0.3, yOf(v), -0.4],
+          tick(engagement ? fmtCompact(v) : `+${v}σ`),
+          { anchor: 'right' }
+        )
+      ),
+      label(
+        'title',
+        [X0, BANGER_HEIGHT + 0.7, -0.4],
+        <span>
+          <span className='eyebrow'>
+            {engagement ? 'Most engaging' : 'Biggest outliers'}
+          </span>
+          <span className='ml-2 text-[10.5px] text-ink-3'>
+            {engagement
+              ? 'likes + 2× reposts · log scale'
+              : 'how far above your typical tweet at the time (robust z-score)'}
+          </span>
+        </span>,
+        { anchor: 'left' }
+      )
+    ]
+    bangers.ranked.slice(0, 18).forEach((i, k) => {
+      const text = displayText(model.ds.tweets.text[i]!).replace(/\s+/g, ' ')
+      const excerpt =
+        text.length > 46 ? `${text.slice(0, 45).trimEnd()}…` : text
+      labels.push({
+        key: `b${i}`,
+        position: bangers.tops[k]!,
+        priority: 1000 - k,
+        anchor: 'bottom',
+        interactive: true,
+        node: (
+          <button
+            type='button'
+            onClick={() => flyTo({ type: 'tweet', index: i })}
+            className='glass pressable mb-2.5 flex max-w-[260px] cursor-pointer items-center gap-1.5 rounded-full px-2.5 py-1 text-left text-[11px] text-white/90 hover:bg-white/15'
+          >
+            <span className='shrink-0 font-semibold text-[#ffd59a] tabular'>
+              {engagement
+                ? `${fmtCompact(Math.max(0, model.likes[i]!))} ♥`
+                : `+${model.outlier[i]!.toFixed(1)}σ`}
+            </span>
+            <span className='truncate'>{excerpt || '(media)'}</span>
+          </button>
+        )
+      })
+    })
+    return labels
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [model, bangers, flyTo])
+
+  return (
+    <group>
+      <TimeAxisLines model={model} />
+      {ticks.map((v) => (
+        <FadeLine
+          key={`g${v}`}
+          points={[
+            [X0, yOf(v), -0.4],
+            [X1, yOf(v), -0.4]
+          ]}
+          opacity={0.06}
+        />
+      ))}
+      <lineSegments ref={stems} geometry={geometry} material={material} />
+      <LabelLayer items={items} delay={1.6} />
+    </group>
+  )
 }

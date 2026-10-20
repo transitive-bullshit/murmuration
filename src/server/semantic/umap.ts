@@ -18,8 +18,8 @@ export interface UmapOptions {
   learningRate?: number
   repulsionStrength?: number
   /**
-   * Optional cluster id per point: edges between different clusters are
-   * scaled by `crossClusterWeight` (like umap-learn's categorical
+   * Optional cluster id per point: edges between different clusters (or
+   * touching an unclustered point, id -1) are scaled by `crossClusterWeight` (like umap-learn's categorical
    * supervision), so clusters read as contiguous, separated regions.
    */
   labels?: Int32Array
@@ -232,8 +232,9 @@ export async function optimizeUmap(
   if (labels) {
     const cross = options.crossClusterWeight ?? 0.1
     for (let e = 0; e < graph.weight.length; e++) {
-      if (labels[graph.head[e]!] !== labels[graph.tail[e]!])
-        graph.weight[e]! *= cross
+      const a = labels[graph.head[e]!]!
+      const b = labels[graph.tail[e]!]!
+      if (a !== b || a < 0) graph.weight[e]! *= cross
     }
   }
   let maxWeight = 0

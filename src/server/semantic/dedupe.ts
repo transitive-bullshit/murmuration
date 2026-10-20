@@ -1,3 +1,5 @@
+import type { Clock } from './scheduler'
+
 /**
  * Collapse rows with bit-identical vectors (identical texts after URL /
  * mention stripping, tombstones like "this post is unavailable") to one
@@ -5,11 +7,12 @@
  * cheaper, and duplicates no longer form disconnected kNN cliques that UMAP
  * flings to the far edge of the map.
  */
-export function groupDuplicates(
+export async function groupDuplicates(
   X: Float32Array,
   m: number,
-  d: number
-): { unique: Int32Array; groupOf: Int32Array } {
+  d: number,
+  clock?: Clock
+): Promise<{ unique: Int32Array; groupOf: Int32Array }> {
   const bits = new Uint32Array(X.buffer, X.byteOffset, m * d)
   const buckets = new Map<number, number[]>()
   const groupOf = new Int32Array(m)
@@ -33,6 +36,7 @@ export function groupDuplicates(
     if (bucket) bucket.push(unique.length)
     else buckets.set(h, [unique.length])
     unique.push(i)
+    if ((i & 1023) === 0 && clock?.due()) await clock.pause()
   }
   return { unique: Int32Array.from(unique), groupOf }
 }

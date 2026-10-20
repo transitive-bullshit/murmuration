@@ -1,3 +1,5 @@
+import path from 'node:path'
+
 import {
   DATASET_VERSION,
   FMT,
@@ -7,6 +9,17 @@ import {
   type TweetColumns
 } from '../shared/types'
 import { openReadOnly, resolveDbPath, fingerprintDb } from './db'
+import type { FanoutProgress } from './fanout'
+import {
+  captionTweetImages,
+  embedTexts,
+  embeddingInput,
+  localEmbedder,
+  openaiEmbedder,
+  truncateVectors,
+  type EmbedderSpec,
+  type Embeddings
+} from './embed'
 import {
   buildWeeklySeries,
   detectInflections,
@@ -17,13 +30,15 @@ import { tweetFeatures, type TweetFeatures } from './features'
 import { reconstructFollowTimes } from './followers'
 import { loadArchive, type RawTweet } from './load'
 import { buildPeople, type PersonInteraction } from './people'
-import { buildSemanticMap } from './semantic'
+import { buildSemanticMap, captionTerms } from './semantic'
 import { LegacyUserIdClock } from './time'
 
 export type ProgressFn = (phase: string, fraction: number) => void
 
 const PLACEHOLDER =
   /^(You’re unable to view this Post|This Post is from a suspended account|This Post (was deleted|is unavailable))/
+
+const OPENAI_MAP_DIMS = 256
 
 /** Rounds for compact JSON; non-finite values become 0 (JSON would emit null). */
 const round = (v: number, digits: number) => {
@@ -73,6 +88,18 @@ export async function buildDataset(
   ].sort((a, b) => a.t - b.t)
   const features: TweetFeatures[] = all.map((t) =>
     tweetFeatures(t, { selfProfileId: account.profileId, selfThreadParents })
+  )
+
+  // Image captions & embeddings ---------------------------------------------
+  // X's placeholders for suspended or protected accounts carry no meaning.
+  const texts = all.map((t) => (PLACEHOLDER.test(t.text) ? '' : t.text))
+  const cacheDir = path.join(process.cwd(), '.cache')
+  const apiKey = process.env.OPENAI_API_KEY || undefined
+  const warnings: string[] = []
+  const step = { cacheDir, apiKey, onProgress, warnings }
+  const captions = await time('captions', () => describeImages(all, step))
+  const embedding = await time('embed', () =>
+    embedTweets(all, texts, captions, step)
   )
 
   // Follower history ---------------------------------------------------------
@@ -140,10 +167,29 @@ export async function buildDataset(
   )
   const semantic = await time('semantic', () =>
     buildSemanticMap(
-      // X's placeholders for suspended or protected accounts carry no meaning.
-      all.map((t) => (PLACEHOLDER.test(t.text) ? '' : t.text)),
+      // Labels come from the words of the tweet and its image captions
+      // (minus the captions' visual filler: "sits", "beneath", colors).
+      texts.map((text, i) =>
+        [text, ...captions[i]!.map(captionTerms)].join('\n')
+      ),
       {
         weights,
+        // text-embedding-3 is Matryoshka-trained: a short prefix keeps the
+        // neighborhood structure at a fraction of the clustering cost.
+        ...(embedding && {
+          vectors:
+            embedding.provider === 'openai'
+              ? truncateVectors(
+                  embedding.vectors,
+                  embedding.dim,
+                  OPENAI_MAP_DIMS
+                )
+              : embedding.vectors,
+          dim:
+            embedding.provider === 'openai'
+              ? Math.min(OPENAI_MAP_DIMS, embedding.dim)
+              : embedding.dim
+        }),
         onProgress: (phase, fraction) =>
           onProgress(semanticPhaseLabel(phase), fraction)
       }
@@ -284,7 +330,8 @@ export async function buildDataset(
     outlier: Array.from(outlier, (v) => round(v, 2)),
     lift: Array.from(lift, (v) => round(v, 2)),
     text: all.map((t) => t.text),
-    media: all.map((t) => t.mediaUrl)
+    media: all.map((t) => t.mediaUrl),
+    caption: captions.map((c) => c.join('\n'))
   }
 
   return {
@@ -308,7 +355,25 @@ export async function buildDataset(
         dms: archive.dmTotal
       },
       range: { start: account.createdAt, end },
-      timings: { ...timings, ...prefixKeys('semantic.', semantic.timings) }
+      timings: { ...timings, ...prefixKeys('semantic.', semantic.timings) },
+      embedding: embedding
+        ? {
+            provider: embedding.provider === 'openai' ? 'openai' : 'local',
+            model: embedding.model,
+            dims: embedding.dim,
+            captions: captions.filter((c) => c.length > 0).length,
+            missing: embedding.missing,
+            imputed: semantic.imputed
+          }
+        : {
+            provider: 'lsa',
+            model: 'tf-idf + truncated svd',
+            dims: 96,
+            captions: 0,
+            missing: 0,
+            imputed: 0
+          },
+      warnings
     },
     tweets,
     clusters: semantic.clusters,
@@ -329,8 +394,132 @@ export async function buildDataset(
   }
 }
 
+const errorMessage = (err: unknown, secret?: string) => {
+  const message = err instanceof Error ? err.message : String(err)
+  return secret ? message.replaceAll(secret, '***') : message
+}
+
+/** "Embedding tweets (1,200 of 44,739 · 3 skipped)" */
+const countPhase = (phase: string, { done, failed, total }: FanoutProgress) =>
+  `${phase} (${done.toLocaleString()} of ${total.toLocaleString()}${failed ? ` · ${failed.toLocaleString()} skipped` : ''})`
+
+interface StepOptions {
+  cacheDir: string
+  apiKey?: string
+  onProgress: ProgressFn
+  /** user-facing notes collected into meta.warnings */
+  warnings: string[]
+}
+
+/** Captions for each tweet's first images (OpenAI only), cached per media URL. */
+async function describeImages(
+  all: RawTweet[],
+  options: StepOptions
+): Promise<string[][]> {
+  const none = all.map(() => [])
+  if (!options.apiKey) return none
+  const media = all.map((t) => t.mediaUrls ?? (t.mediaUrl ? [t.mediaUrl] : []))
+  const log = (line: string) =>
+    console.warn(line.replaceAll(options.apiKey!, '***'))
+  options.onProgress('Describing images', 0)
+  try {
+    const result = await captionTweetImages(media, {
+      cacheDir: options.cacheDir,
+      apiKey: options.apiKey,
+      log,
+      onProgress: (p) =>
+        options.onProgress(
+          countPhase('Describing images', p),
+          p.done / Math.max(1, p.total)
+        )
+    })
+    if (result.warning) options.warnings.push(result.warning)
+    if (result.error) {
+      log(
+        `[murmuration] image captions stopped early: ${errorMessage(result.error, options.apiKey)}`
+      )
+      options.warnings.push(
+        'Describing images stopped early; the rest will be described on the next rebuild.'
+      )
+    }
+    return result.captions
+  } catch (err) {
+    log(
+      `[murmuration] image captions unavailable: ${errorMessage(err, options.apiKey)}`
+    )
+    options.warnings.push(
+      'Images could not be described this time; topics use tweet text only.'
+    )
+    return none
+  } finally {
+    options.onProgress('Describing images', 1)
+  }
+}
+
+/**
+ * Embeds tweet text plus image captions with the best available provider:
+ * OpenAI (when a key is set), then local transformers.js. Returns undefined
+ * when neither works, so the semantic map falls back to bag-of-words LSA.
+ */
+async function embedTweets(
+  all: RawTweet[],
+  texts: string[],
+  captions: string[][],
+  options: StepOptions
+): Promise<Embeddings | undefined> {
+  const inputs: string[] = []
+  for (const [i, text] of texts.entries()) {
+    inputs.push(embeddingInput(text, captions[i]))
+    // Regex-heavy cleanup: let the dev server breathe.
+    if (i % 2000 === 1999) await new Promise((resolve) => setImmediate(resolve))
+  }
+  const providers: EmbedderSpec[] = [
+    ...(options.apiKey ? [openaiEmbedder({ apiKey: options.apiKey })] : []),
+    localEmbedder(options.cacheDir)
+  ]
+  const log = (line: string) =>
+    console.warn(options.apiKey ? line.replaceAll(options.apiKey, '***') : line)
+  for (const embedder of providers) {
+    options.onProgress('Embedding tweets', 0)
+    try {
+      const result = await embedTexts(
+        all.map((t) => t.id),
+        inputs,
+        {
+          cacheDir: options.cacheDir,
+          embedder,
+          log,
+          onProgress: (p) =>
+            options.onProgress(
+              countPhase('Embedding tweets', p),
+              p.done / Math.max(1, p.total)
+            )
+        }
+      )
+      if (result.warning) options.warnings.push(result.warning)
+      return result
+    } catch (err) {
+      log(
+        `[murmuration] ${embedder.provider} embeddings failed, trying the next option: ${errorMessage(err, options.apiKey)}`
+      )
+      options.warnings.push(
+        embedder.provider === 'openai'
+          ? 'OpenAI embeddings failed this time; topics use the local model instead.'
+          : 'Local embeddings failed; topics fall back to word statistics.'
+      )
+    } finally {
+      options.onProgress('Embedding tweets', 1)
+    }
+  }
+  return undefined
+}
+
 function semanticPhaseLabel(phase: string): string {
   switch (phase) {
+    case 'reducing':
+      return 'Condensing embeddings'
+    case 'neighbors':
+      return 'Connecting similar tweets'
     case 'tokenizing':
       return 'Reading every tweet'
     case 'tf-idf':

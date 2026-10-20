@@ -86,6 +86,9 @@ export function TweetSummary({
   const flags = model.flags[index]!
   const text = displayText(tw.text[index]!)
   const mediaUrl = tw.media[index]!
+  // AI description of the tweet's images (empty without an OpenAI key).
+  const caption = tw.caption?.[index] ?? ''
+  const showImage = media && mediaUrl !== '' && !mediaFailed
 
   return (
     <div className='flex flex-col gap-2.5'>
@@ -115,16 +118,25 @@ export function TweetSummary({
         {text || '—'}
       </p>
 
-      {media && mediaUrl && !mediaFailed && (
+      {showImage && (
         <img
           src={mediaUrl}
-          alt=''
+          alt={caption.replaceAll('\n', ' ')}
           loading='lazy'
           referrerPolicy='no-referrer'
           onError={() => setMediaFailed(true)}
           className={`w-full rounded-xl border border-white/[0.06] object-cover ${full ? 'max-h-72' : 'max-h-40'}`}
         />
       )}
+
+      {caption && (full || !showImage) ? (
+        <p
+          className={`whitespace-pre-line text-[11.5px] leading-snug text-ink-3 ${full ? '' : 'line-clamp-2'}`}
+        >
+          <span className='text-ink-4'>Image · </span>
+          {caption}
+        </p>
+      ) : null}
 
       {isMine || model.likes[index]! > 0 ? (
         <div className='flex items-end gap-5 border-t border-white/[0.06] pt-2.5'>
@@ -173,10 +185,13 @@ export function relLabel(rel: number) {
 
 export function PersonSummary({
   model,
-  index
+  index,
+  full = false
 }: {
   model: Model
   index: number
+  /** detail view: also explain what the archive can't see */
+  full?: boolean
 }) {
   const p = model.ds.people
   const media = useApp((s) => s.mediaPreviews)
@@ -184,7 +199,19 @@ export function PersonSummary({
   const rel = relLabel(p.rel[index]!)
   const handle = p.handle[index]
   const closeness = p.closeness[index]!
-  const out = p.outReplies[index]! + p.outMentions[index]! + p.outShares[index]!
+  // Only show what the data can actually back up. Your replies, mentions,
+  // reposts and DMs come from the full archive, so zero means zero. Their
+  // replies/mentions and your likes of their tweets are only partly synced,
+  // so a zero there is unknown, not zero. Their likes of you aren't in any X
+  // export, so we never show them.
+  const metrics: { label: string; value: number }[] = [
+    { label: 'your replies', value: p.outReplies[index]! },
+    { label: 'your mentions', value: p.outMentions[index]! },
+    { label: 'your reposts', value: p.outShares[index]! },
+    { label: 'you liked', value: p.outLikes[index]! },
+    { label: 'their replies', value: p.inMentions[index]! },
+    { label: 'DMs', value: p.dmIn[index]! + p.dmOut[index]! }
+  ].filter((m) => m.value > 0)
   return (
     <div className='flex flex-col gap-2.5'>
       <div className='flex items-center gap-2.5'>
@@ -231,15 +258,28 @@ export function PersonSummary({
           />
         </div>
       </div>
-      <div className='grid grid-cols-4 gap-2 border-t border-white/[0.06] pt-2.5'>
-        <Metric label='you →' value={fmtInt(out)} />
-        <Metric label='likes' value={fmtInt(p.outLikes[index]!)} />
-        <Metric label='→ you' value={fmtInt(p.inMentions[index]!)} />
-        <Metric
-          label='DMs'
-          value={fmtCompact(p.dmIn[index]! + p.dmOut[index]!)}
-        />
-      </div>
+      {metrics.length > 0 ? (
+        <div className='grid grid-cols-3 gap-x-2 gap-y-2.5 border-t border-white/[0.06] pt-2.5'>
+          {metrics.map((m) => (
+            <Metric
+              key={m.label}
+              label={m.label}
+              value={m.label === 'DMs' ? fmtCompact(m.value) : fmtInt(m.value)}
+            />
+          ))}
+        </div>
+      ) : (
+        <div className='border-t border-white/[0.06] pt-2.5 text-[11.5px] text-ink-3'>
+          No recorded interactions.
+        </div>
+      )}
+      {full && (
+        <p className='text-[10.5px] leading-relaxed text-ink-4'>
+          X&apos;s archive doesn&apos;t record who liked your tweets, and only
+          recent replies to you are synced, so those can&apos;t be shown in
+          full.
+        </p>
+      )}
       {p.outlierReason[index] && (
         <div className='text-[11.5px] text-[#ffd59a]'>
           {p.outlierReason[index]}

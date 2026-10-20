@@ -13,6 +13,7 @@ import {
 } from '../data/format'
 import { KIND, type Model } from '../data/model'
 import { anatomyStats, type AnatomyBucket } from '../layouts/anatomy'
+import { selectBangers } from '../layouts/bangers'
 import { median } from '../stats'
 import { VIEWS, useApp, type AnatomyGroup } from '../store'
 import { relLabel } from './cards'
@@ -53,6 +54,7 @@ export function ViewPanel({ model }: { model: Model }) {
           {view === 'constellation' && <ConstellationPanel model={model} />}
           {view === 'strata' && <StrataPanel model={model} />}
           {view === 'growth' && <GrowthPanel model={model} />}
+          {view === 'bangers' && <BangersPanel model={model} />}
           {view === 'anatomy' && <AnatomyPanel model={model} />}
           {view === 'orbit' && <OrbitPanel model={model} />}
         </div>
@@ -203,6 +205,24 @@ function ConstellationPanel({ model }: { model: Model }) {
 // Strata --------------------------------------------------------------------
 
 function StrataPanel({ model }: { model: Model }) {
+  const range = useApp((s) => s.range)
+  const setRange = useApp((s) => s.setRange)
+  // A year is "active" when the time filter is exactly that calendar year,
+  // whether it was set here or by brushing the timeline.
+  const yearRange = (y: number): [number, number] => [
+    Date.UTC(y, 0, 1) / 1000,
+    Date.UTC(y + 1, 0, 1) / 1000 - 1
+  ]
+  const activeYear = range
+    ? model.years.find((y) => {
+        const [a, b] = yearRange(y)
+        return (
+          Math.abs(range[0] - a) < 86_400 && Math.abs(range[1] - b) < 86_400
+        )
+      })
+    : undefined
+  const toggleYear = (y: number) =>
+    setRange(activeYear === y ? undefined : yearRange(y))
   const facts = useMemo(() => {
     const byYear = new Map<
       number,
@@ -257,36 +277,54 @@ function StrataPanel({ model }: { model: Model }) {
         Columns are sorted by topic, so the color bands are what you were
         thinking about.
       </p>
-      <Section title='By year' aside='yours · likes · distinctive topic'>
+      <Section title='By year' aside='click a year to focus it'>
         <ul className='flex flex-col gap-1.5'>
           {facts.map((f) => (
-            <li key={f.year} className='flex items-center gap-2.5'>
-              <span className='w-9 text-[11.5px] text-ink-3 tabular'>
-                {f.year}
-              </span>
-              <span className='flex h-2 flex-1 overflow-hidden rounded-full bg-white/[0.04]'>
-                <span
-                  className='h-full bg-[#d95926]'
-                  style={{ width: `${(f.mine / f.max) * 100}%` }}
-                />
-                <span
-                  className='h-full bg-[#3987e5]/70'
-                  style={{ width: `${(f.likes / f.max) * 100}%` }}
-                />
-              </span>
-              <span
-                className='w-[120px] truncate text-right text-[11px]'
-                style={{
-                  color:
-                    f.topicId !== undefined
-                      ? linearToHex(
-                          model.clusterColor[f.topicId] ?? [0.6, 0.6, 0.6]
-                        )
-                      : undefined
-                }}
+            <li key={f.year}>
+              <button
+                type='button'
+                onClick={() => toggleYear(f.year)}
+                aria-pressed={activeYear === f.year}
+                title={
+                  activeYear === f.year
+                    ? 'Show all years'
+                    : `Focus on ${f.year}`
+                }
+                className={`pressable -mx-2 flex w-[calc(100%+16px)] items-center gap-2.5 rounded-lg px-2 py-0.5 text-left transition-opacity ${
+                  activeYear === f.year
+                    ? 'bg-white/[0.08]'
+                    : activeYear !== undefined
+                      ? 'opacity-45 hover:opacity-80'
+                      : 'hover:bg-white/[0.04]'
+                }`}
               >
-                {f.topic?.label.split(' · ').slice(0, 2).join(' · ') ?? '—'}
-              </span>
+                <span className='w-9 text-[11.5px] text-ink-3 tabular'>
+                  {f.year}
+                </span>
+                <span className='flex h-2 flex-1 overflow-hidden rounded-full bg-white/[0.04]'>
+                  <span
+                    className='h-full bg-[#d95926]'
+                    style={{ width: `${(f.mine / f.max) * 100}%` }}
+                  />
+                  <span
+                    className='h-full bg-[#3987e5]/70'
+                    style={{ width: `${(f.likes / f.max) * 100}%` }}
+                  />
+                </span>
+                <span
+                  className='w-[120px] truncate text-right text-[11px]'
+                  style={{
+                    color:
+                      f.topicId !== undefined
+                        ? linearToHex(
+                            model.clusterColor[f.topicId] ?? [0.6, 0.6, 0.6]
+                          )
+                        : undefined
+                  }}
+                >
+                  {f.topic?.label.split(' · ').slice(0, 2).join(' · ') ?? '—'}
+                </span>
+              </button>
             </li>
           ))}
         </ul>
@@ -470,6 +508,110 @@ function InflectionDetail({
           </ul>
         </Section>
       )}
+    </>
+  )
+}
+
+// Bangers -------------------------------------------------------------------
+
+function BangersPanel({ model }: { model: Model }) {
+  const mode = useApp((s) => s.bangerMode)
+  const setMode = useApp((s) => s.setBangerMode)
+  const range = useApp((s) => s.range)
+  const selected = useApp((s) => s.selected)
+  const flyTo = useApp((s) => s.flyTo)
+  const bangers = useMemo(
+    () => selectBangers(model, mode, range),
+    [model, mode, range]
+  )
+  const stats = useMemo(() => {
+    const eng: number[] = []
+    let thousands = 0
+    for (let i = 0; i < model.n; i++) {
+      if (!model.analyzable[i]) continue
+      if (range && (model.t[i]! < range[0] || model.t[i]! > range[1])) continue
+      eng.push(model.eng[i]!)
+      if (model.likes[i]! >= 1000) thousands++
+    }
+    eng.sort((a, b) => b - a)
+    const total = eng.reduce((a, b) => a + b, 0) || 1
+    const top = Math.max(1, Math.ceil(eng.length * 0.01))
+    const share = eng.slice(0, top).reduce((a, b) => a + b, 0) / total
+    return { share, thousands, top }
+  }, [model, range])
+
+  return (
+    <>
+      <div className='mb-3 grid grid-cols-2 gap-0.5 rounded-full bg-white/[0.04] p-0.5'>
+        {(
+          [
+            ['engagement', 'Most engaging'],
+            ['outlier', 'Biggest outliers']
+          ] as const
+        ).map(([id, text]) => (
+          <button
+            key={id}
+            type='button'
+            onClick={() => setMode(id)}
+            className={`pressable rounded-full py-1 text-[11.5px] font-medium ${mode === id ? 'bg-white/[0.12] text-ink' : 'text-ink-3 hover:text-ink-2'}`}
+          >
+            {text}
+          </button>
+        ))}
+      </div>
+      <div className='grid grid-cols-2 gap-2'>
+        <Stat
+          value={`${Math.round(stats.share * 100)}%`}
+          label={`of your engagement came from your top ${fmtInt(stats.top)} tweets (1%)`}
+        />
+        <Stat value={fmtInt(stats.thousands)} label='tweets with 1K+ likes' />
+      </div>
+      <p className='mt-3 text-[11.5px] leading-relaxed text-ink-3'>
+        {mode === 'engagement'
+          ? 'Ranked by likes + 2× reposts. Height is engagement on a log scale.'
+          : 'Ranked by how far each tweet beat your typical tweet at the time, so early hits count as much as recent ones.'}
+      </p>
+      <Section
+        title={`Top ${Math.min(50, bangers.ranked.length)}`}
+        aside='click to fly there'
+      >
+        <ol className='-mx-2 flex flex-col'>
+          {bangers.ranked.slice(0, 50).map((i, k) => (
+            <li key={i}>
+              <button
+                type='button'
+                onClick={() => flyTo({ type: 'tweet', index: i })}
+                className={`pressable flex w-full gap-2.5 rounded-xl px-2 py-2 text-left ${
+                  selected?.type === 'tweet' && selected.index === i
+                    ? 'bg-white/[0.08]'
+                    : 'hover:bg-white/[0.045]'
+                }`}
+              >
+                <span className='w-5 shrink-0 pt-px text-right text-[11px] font-semibold text-ink-4 tabular'>
+                  {k + 1}
+                </span>
+                <span className='min-w-0 flex-1'>
+                  <span className='line-clamp-2 text-[12px] leading-snug text-ink'>
+                    {displayText(model.ds.tweets.text[i]!) || '(media)'}
+                  </span>
+                  <span className='mt-1 flex flex-wrap gap-x-2 text-[10.5px] text-ink-3 tabular'>
+                    <span>{fmtDate(model.t[i]!)}</span>
+                    <span className='text-[#ffd59a]'>
+                      {mode === 'engagement'
+                        ? `${fmtCompact(model.likes[i]!)} likes`
+                        : `+${model.outlier[i]!.toFixed(1)}σ`}
+                    </span>
+                    {mode === 'engagement' && model.rts[i]! > 0 && (
+                      <span>{fmtCompact(model.rts[i]!)} reposts</span>
+                    )}
+                    <span>{fmtMultiple(model.lift[i]!)} typical</span>
+                  </span>
+                </span>
+              </button>
+            </li>
+          ))}
+        </ol>
+      </Section>
     </>
   )
 }
@@ -661,8 +803,10 @@ function OrbitPanel({ model }: { model: Model }) {
       </div>
       <p className='mt-3 text-[12px] leading-relaxed text-ink-3'>
         Angle is when someone entered your orbit (clockwise from{' '}
-        {model.years[0]}); distance is mutual engagement from replies, mentions,
-        likes, reposts, and two-way DMs. Press play to travel through time.
+        {model.years[0]}); distance is recent, two-way engagement. Replies and
+        mentions in both directions count most, your one-sided likes and replies
+        less, and two-way DMs least; everything fades with a ~1-year half-life.
+        Press play to travel through time.
       </p>
       <Section title='Closest' aside='closeness'>
         <ul className='-mx-2 flex flex-col'>

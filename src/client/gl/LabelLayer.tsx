@@ -76,16 +76,14 @@ export function LabelLayer({
       const y = (-v.current.y * 0.5 + 0.5) * size.height
       const [w, h] = d
       const anchor = item.anchor ?? 'center'
-      const left =
-        anchor === 'right' ? x - w : anchor === 'left' ? x : x - w / 2
-      const top = anchor === 'bottom' ? y - h : anchor === 'top' ? y : y - h / 2
-      // Hide labels that would be clipped by the viewport edge.
+      // Keep labels inside the viewport: slide them in from the edges as
+      // long as the point they label is on screen; otherwise hide them.
+      let left = anchor === 'right' ? x - w : anchor === 'left' ? x : x - w / 2
+      let top = anchor === 'bottom' ? y - h : anchor === 'top' ? y : y - h / 2
       const offscreen =
-        behind ||
-        left < 2 ||
-        top < 2 ||
-        left + w > size.width - 2 ||
-        top + h > size.height - 2
+        behind || x < 0 || x > size.width || y < 0 || y > size.height
+      left = Math.min(Math.max(left, 4), size.width - w - 4)
+      top = Math.min(Math.max(top, 4), size.height - h - 4)
       const box: [number, number, number, number] = [
         left - PAD,
         top - PAD,

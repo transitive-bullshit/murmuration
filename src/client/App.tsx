@@ -5,6 +5,7 @@ import { loadDataset, type Status } from './data/load'
 import { buildModel } from './data/model'
 import { Scene } from './gl/Scene'
 import { useApp } from './store'
+import { BuildNotice } from './ui/BuildNotice'
 import { DetailPanel } from './ui/DetailPanel'
 import { HoverCard } from './ui/HoverCard'
 import { Loading } from './ui/Loading'
@@ -77,6 +78,7 @@ export function App() {
           <Timeline model={model} />
           <DetailPanel model={model} />
           <HoverCard model={model} />
+          <BuildNotice warnings={model.ds.meta.warnings ?? []} />
         </div>
       )}
 

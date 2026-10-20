@@ -21,6 +21,7 @@ const FRAMINGS: Record<ViewId, Framing> = {
   constellation: { target: [0, 0, 0], dir: [0.04, 0.17, 1], frame: [17, 14] },
   strata: { target: [0.6, 2.6, 0], dir: [-0.07, 0.3, 1], frame: [30, 10] },
   growth: { target: [0, 4.7, 0], dir: [0, 0.08, 1], frame: [28.2, 11.4] },
+  bangers: { target: [0, 4.7, 0], dir: [0, 0.08, 1], frame: [28.4, 11.6] },
   anatomy: { target: [0, 2, 0], dir: [0, 0.2, 1], frame: [26.5, 7.6] },
   orbit: { target: [0, -0.6, 0], dir: [0, 0.78, 1], frame: [23.5, 15] }
 }

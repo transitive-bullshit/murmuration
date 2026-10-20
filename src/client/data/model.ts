@@ -28,6 +28,7 @@ export interface Model {
   outlier: Float32Array
   lift: Float32Array
   seed: Float32Array
+  /** tweet text plus its image captions, lowercased, for search */
   textLower: string[]
   /** time domain shown on time axes, unix seconds */
   domain: [number, number]
@@ -177,7 +178,9 @@ export function buildModel(ds: Dataset): Model {
     outlier: Float32Array.from(tw.outlier),
     lift: Float32Array.from(tw.lift),
     seed,
-    textLower: tw.text.map((s) => s.toLowerCase()),
+    textLower: tw.text.map((s, i) =>
+      (tw.caption?.[i] ? `${s}\n${tw.caption[i]}` : s).toLowerCase()
+    ),
     domain,
     maxLogEng: Math.max(1, maxLogEng),
     clusterColor,

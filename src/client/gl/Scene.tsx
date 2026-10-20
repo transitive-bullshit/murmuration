@@ -4,6 +4,7 @@ import * as THREE from 'three'
 
 import type { Model } from '../data/model'
 import { anatomyStats } from '../layouts/anatomy'
+import { bangersLayout, selectBangers } from '../layouts/bangers'
 import {
   computeArrivals,
   hiddenPeopleLayout,
@@ -21,6 +22,7 @@ import { CameraRig, leftPanelWidth } from './CameraRig'
 import { Effects } from './Effects'
 import {
   AnatomyOverlay,
+  BangersOverlay,
   ConstellationOverlay,
   GrowthOverlay,
   OrbitOverlay,
@@ -39,6 +41,7 @@ const NO_FX =
 export function Scene({ model }: { model: Model }) {
   const view = useApp((s) => s.view)
   const anatomyGroup = useApp((s) => s.anatomyGroup)
+  const bangerMode = useApp((s) => s.bangerMode)
   const range = useApp((s) => s.range)
   const playhead = useApp((s) => s.playhead)
   const hovered = useApp((s) => s.hovered)
@@ -57,6 +60,14 @@ export function Scene({ model }: { model: Model }) {
     [model, anatomyGroup, range]
   )
   const anatomy = useMemo(() => anatomyLayout(model, stats), [model, stats])
+  const bangers = useMemo(
+    () => selectBangers(model, bangerMode, range),
+    [model, bangerMode, range]
+  )
+  const bangersView = useMemo(
+    () => bangersLayout(model, bangers),
+    [model, bangers]
+  )
   const peopleHidden = useMemo(() => hiddenPeopleLayout(model), [model])
   const arrivals = useMemo(() => computeArrivals(model), [model])
   const peopleOrbit = useMemo(
@@ -71,9 +82,11 @@ export function Scene({ model }: { model: Model }) {
         ? strata.layout
         : view === 'growth'
           ? growth
-          : view === 'anatomy'
-            ? anatomy
-            : sun
+          : view === 'bangers'
+            ? bangersView
+            : view === 'anatomy'
+              ? anatomy
+              : sun
   const peopleLayout = view === 'orbit' ? peopleOrbit : peopleHidden
 
   const tweetVis = useTweetVisibility(model)
@@ -133,7 +146,7 @@ export function Scene({ model }: { model: Model }) {
       .clone()
       .sub(new THREE.Vector3(...p))
       .normalize()
-      .multiplyScalar(5.5)
+      .multiplyScalar(view === 'constellation' || view === 'orbit' ? 5.5 : 9)
     return {
       position: [p[0] + dir.x, p[1] + dir.y, p[2] + dir.z] as [
         number,
@@ -166,7 +179,37 @@ export function Scene({ model }: { model: Model }) {
       target
     }
   }, [view, focusId, model, size.width, size.height])
-  const focus = flyFocus ?? inflectionFocus
+  // A time-range filter in Strata or Bangers frames that stretch of time.
+  const rangeFocus = useMemo(() => {
+    if (!range || (view !== 'strata' && view !== 'bangers')) return undefined
+    const x0 = model.timeToX(Math.max(range[0], model.domain[0]))
+    const x1 = model.timeToX(Math.min(range[1], model.domain[1]))
+    const cx = (x0 + x1) / 2
+    const width = Math.max(
+      view === 'strata' ? 14 : 8,
+      x1 - x0 + (view === 'strata' ? 8 : 3)
+    )
+    const height = view === 'strata' ? 15 : 11.6
+    const ty = view === 'strata' ? 2.4 : 4.7
+    const aspect = (size.width - leftPanelWidth(size.width)) / size.height
+    const tan = Math.tan((40 * Math.PI) / 360)
+    const dist = Math.max(width / 2 / (tan * aspect), height / 2 / tan) * 1.04
+    const dir = new THREE.Vector3(
+      ...((view === 'strata' ? [-0.05, 0.16, 1] : [0, 0.08, 1]) as [
+        number,
+        number,
+        number
+      ])
+    )
+      .normalize()
+      .multiplyScalar(dist)
+    return {
+      position: [cx + dir.x, ty + dir.y, dir.z] as [number, number, number],
+      target: [cx, ty, 0] as [number, number, number]
+    }
+  }, [range, view, model, size.width, size.height])
+
+  const focus = flyFocus ?? inflectionFocus ?? rangeFocus
 
   return (
     <>
@@ -213,6 +256,7 @@ export function Scene({ model }: { model: Model }) {
         <StrataOverlay model={model} geometry={strata.geometry} />
       )}
       {view === 'growth' && <GrowthOverlay model={model} />}
+      {view === 'bangers' && <BangersOverlay model={model} bangers={bangers} />}
       {view === 'anatomy' && <AnatomyOverlay model={model} stats={stats} />}
       {view === 'orbit' && <OrbitOverlay model={model} />}
 

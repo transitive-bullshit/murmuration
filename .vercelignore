@@ -1,0 +1,7 @@
+# Never upload local secrets or private caches, even when deploying from source.
+.env
+.env.*
+!.env.example
+.cache
+.claude
+work

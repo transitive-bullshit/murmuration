@@ -29,7 +29,7 @@ export function TopBar({ model }: { model: Model }) {
       <ViewSwitcher />
 
       <div className='pointer-events-auto flex items-center gap-2'>
-        <StaleNotice />
+        {import.meta.env.DEV && <StaleNotice />}
         <Search model={model} />
         <KindToggles />
         <ControlsGuide />
@@ -223,7 +223,7 @@ function Search({ model }: { model: Model }) {
               {isPeople ? (
                 <PersonResult model={model} index={r} />
               ) : (
-                <TweetResult model={model} index={r} />
+                <TweetResult model={model} index={r} query={query} />
               )}
             </button>
           ))}
@@ -236,14 +236,37 @@ function Search({ model }: { model: Model }) {
   )
 }
 
-function TweetResult({ model, index }: { model: Model; index: number }) {
+function TweetResult({
+  model,
+  index,
+  query
+}: {
+  model: Model
+  index: number
+  query: string
+}) {
   const mine = model.kind[index] === KIND.mine
   const author = model.ds.tweets.author[index]!
+  const text = model.ds.tweets.text[index]!
+  const caption = model.ds.tweets.caption?.[index] ?? ''
+  const textLower = text.toLowerCase()
+  // When only the image description matched, show it so the hit makes sense.
+  const viaImage =
+    caption !== '' &&
+    query
+      .toLowerCase()
+      .split(/\s+/)
+      .some((term) => term && !textLower.includes(term))
   return (
     <>
       <span className='line-clamp-2 text-[12.5px] leading-snug text-ink'>
-        {displayText(model.ds.tweets.text[index]!)}
+        {displayText(text)}
       </span>
+      {viaImage && (
+        <span className='line-clamp-1 text-[11px] leading-snug text-ink-3'>
+          Image · {caption.split('\n')[0]}
+        </span>
+      )}
       <span className='flex items-center gap-1.5 text-[10.5px] text-ink-3 tabular'>
         <span
           className='size-1.5 rounded-full'
@@ -380,9 +403,11 @@ function KindToggles() {
   )
 }
 
+/** Dev only: offers a rebuild (or re-export) when the archive changes. */
 function StaleNotice() {
   const [stale, setStale] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [failed, setFailed] = useState<string | undefined>()
   useEffect(() => {
     const check = () => {
       fetchStatus()
@@ -398,12 +423,19 @@ function StaleNotice() {
     <button
       type='button'
       disabled={busy}
+      title={failed}
       onClick={() => {
         setBusy(true)
+        setFailed(undefined)
         void (async () => {
           await requestRebuild()
           for (;;) {
             const s = await fetchStatus()
+            if (s.error) {
+              setFailed(s.error)
+              setBusy(false)
+              return
+            }
             if (s.ready && !s.stale) break
             await new Promise((r) => setTimeout(r, 500))
           }
@@ -413,7 +445,11 @@ function StaleNotice() {
       className='glass pressable fade-in flex h-9 shrink-0 items-center gap-2 whitespace-nowrap rounded-full px-3 text-[11.5px] text-ink-2 hover:text-ink'
     >
       <span className='size-1.5 animate-pulse rounded-full bg-[#f0c48a]' />
-      {busy ? 'Re-reading…' : 'New data · refresh'}
+      {busy
+        ? 'Re-reading…'
+        : failed
+          ? 'Refresh failed · retry'
+          : 'New data · refresh'}
     </button>
   )
 }

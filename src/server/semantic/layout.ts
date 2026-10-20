@@ -7,6 +7,8 @@ import { optimizeUmap } from './umap'
 export interface LayoutOptions {
   rng: Rng
   clock: Clock
+  /** cluster per point for UMAP supervision (-1 = unclustered); defaults to the init clusters */
+  labels?: Int32Array
   /** scale of kNN edges between different clusters (1 = unsupervised UMAP) */
   crossClusterWeight?: number
   minDist?: number
@@ -142,7 +144,7 @@ export async function layout3d(
     nEpochs: options.nEpochs ?? (m > 10000 ? 200 : 500),
     minDist: options.minDist ?? 0.1,
     spread: options.spread ?? 1,
-    labels: assignment,
+    labels: options.labels ?? assignment,
     crossClusterWeight: options.crossClusterWeight ?? 0.1,
     rng,
     clock,

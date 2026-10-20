@@ -1,0 +1,214 @@
+import { existsSync, readFileSync } from 'node:fs'
+import { appendFile, mkdir, rename, writeFile } from 'node:fs/promises'
+import path from 'node:path'
+
+import { z } from 'zod'
+
+import { errorText, fanout, type FanoutProgress } from '../fanout'
+
+// Image captions, cached per media URL in an append-only JSONL file so an
+// interrupted run resumes where it stopped. Images are captioned several per
+// request; if a group fails, its images are retried one per request so one
+// bad image can't sink its neighbors. Failed images are recorded and retried
+// on later runs after a growing cooldown, not on every rebuild.
+
+export type Captioner = (url: string, signal?: AbortSignal) => Promise<string>
+export type BatchCaptioner = (
+  urls: string[],
+  signal?: AbortSignal
+) => Promise<string[]>
+
+export interface CaptionOptions {
+  /** JSONL cache file */
+  file: string
+  captioner: Captioner
+  /** optional multi-image captioner; used for groups of `groupSize` */
+  batchCaptioner?: BatchCaptioner
+  groupSize?: number
+  /** 'fatal' (bad key, missing model) stops the run; anything else is the image's problem */
+  classify?: (err: unknown) => 'fatal' | 'item'
+  concurrency?: number
+  now?: () => number
+  onProgress?: (progress: FanoutProgress) => void
+  log?: (line: string) => void
+}
+
+export interface CaptionResult {
+  /** every cached caption for the given URLs, including earlier runs' */
+  captions: Map<string, string>
+  /** images requested in this run */
+  requested: number
+  failed: number
+  /** user-facing note when many images failed */
+  warning?: string
+  /** set when the run stopped early (bad key, service unreachable) */
+  error?: unknown
+}
+
+const Line = z.object({
+  url: z.string(),
+  caption: z.string().optional(),
+  error: z.string().optional(),
+  at: z.number().optional(),
+  attempts: z.number().int().optional()
+})
+type Line = z.infer<typeof Line>
+
+const MAX_ATTEMPTS = 4
+const COOLDOWN_MS = 6 * 3600_000
+
+function readLines(file: string): { latest: Map<string, Line>; lines: number } {
+  const latest = new Map<string, Line>()
+  if (!existsSync(file)) return { latest, lines: 0 }
+  let lines = 0
+  for (const raw of readFileSync(file, 'utf8').split('\n')) {
+    if (!raw.trim()) continue
+    lines++
+    try {
+      const line = Line.parse(JSON.parse(raw))
+      latest.set(line.url, line)
+    } catch {
+      // torn or foreign line: ignore
+    }
+  }
+  return { latest, lines }
+}
+
+function due(line: Line | undefined, now: number): boolean {
+  if (!line) return true
+  if (line.caption) return false
+  const attempts = line.attempts ?? 1
+  return (
+    attempts < MAX_ATTEMPTS &&
+    now - (line.at ?? 0) >= COOLDOWN_MS * 2 ** (attempts - 1)
+  )
+}
+
+export async function captionImages(
+  urls: readonly string[],
+  options: CaptionOptions
+): Promise<CaptionResult> {
+  const now = options.now ?? Date.now
+  const classify = options.classify ?? (() => 'item')
+  const log = options.log ?? ((line: string) => console.warn(line))
+  const { latest, lines } = readLines(options.file)
+  await mkdir(path.dirname(options.file), { recursive: true })
+  if (lines > latest.size * 1.5 + 100) {
+    const tmp = `${options.file}.${process.pid}.tmp`
+    await writeFile(
+      tmp,
+      [...latest.values()].map((l) => `${JSON.stringify(l)}\n`).join('')
+    )
+    await rename(tmp, options.file)
+  }
+
+  const unique = [...new Set(urls.filter(Boolean))]
+  const todo = unique.filter((url) => due(latest.get(url), now()))
+  let writes = Promise.resolve()
+  const record = (line: Line) => {
+    latest.set(line.url, line)
+    writes = writes.then(() =>
+      appendFile(options.file, `${JSON.stringify(line)}\n`)
+    )
+  }
+  const fatal = (err: unknown) => classify(err) === 'fatal'
+
+  let imagesDone = 0
+  let imagesFailed = 0
+  const succeed = (url: string, caption: string) => {
+    if (!caption) return fail(url, new Error('empty caption'))
+    record({ url, caption })
+    return true
+  }
+  const fail = (url: string, err: unknown) => {
+    imagesFailed++
+    log(`[murmuration] image captions: skipped ${url}: ${errorText(err)}`)
+    record({
+      url,
+      error: errorText(err),
+      at: now(),
+      attempts: (latest.get(url)?.attempts ?? 0) + 1
+    })
+    return false
+  }
+  const single = async (url: string, signal: AbortSignal) => {
+    try {
+      return succeed(url, await options.captioner(url, signal))
+    } catch (err) {
+      if (fatal(err) || signal.aborted) throw err
+      return fail(url, err)
+    }
+  }
+
+  const size = options.batchCaptioner ? Math.max(1, options.groupSize ?? 8) : 1
+  const groups: string[][] = []
+  for (let i = 0; i < todo.length; i += size)
+    groups.push(todo.slice(i, i + size))
+
+  let error: unknown
+  try {
+    await fanout(
+      groups,
+      async (group, { signal }) => {
+        let ok = 0
+        try {
+          let captions: string[] | undefined
+          if (options.batchCaptioner && group.length > 1) {
+            try {
+              captions = await options.batchCaptioner(group, signal)
+            } catch (err) {
+              if (fatal(err) || signal.aborted) throw err
+            }
+          }
+          if (captions) {
+            for (const [i, url] of group.entries())
+              if (succeed(url, captions[i] ?? '')) ok++
+          } else {
+            const results = await Promise.all(
+              group.map((url) => single(url, signal))
+            )
+            ok = results.filter(Boolean).length
+          }
+        } finally {
+          imagesDone += group.length
+        }
+        // A group where every image failed counts against the error budget.
+        if (!ok) throw new Error(`all ${group.length} images failed`)
+      },
+      {
+        label: 'image caption groups',
+        concurrency: options.concurrency ?? 16,
+        classify: (err) => (fatal(err) ? 'fatal' : 'item'),
+        // Individual images were already logged above.
+        log: () => {},
+        onProgress: () =>
+          options.onProgress?.({
+            done: imagesDone,
+            failed: imagesFailed,
+            total: todo.length
+          })
+      }
+    )
+  } catch (err) {
+    error = err
+  }
+  await writes
+
+  const captions = new Map<string, string>()
+  for (const url of unique) {
+    const caption = latest.get(url)?.caption
+    if (caption) captions.set(url, caption)
+  }
+  const warning =
+    imagesFailed > 20 ||
+    (imagesFailed > 0 && imagesFailed >= 0.02 * todo.length)
+      ? `${imagesFailed.toLocaleString()} of ${todo.length.toLocaleString()} images couldn't be described; they'll be retried on a later rebuild.`
+      : undefined
+  return {
+    captions,
+    requested: todo.length,
+    failed: imagesFailed,
+    warning,
+    error
+  }
+}

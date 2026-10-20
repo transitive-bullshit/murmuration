@@ -11,6 +11,7 @@
     "dev": "portless run vite --configLoader runner",
     "build": "vite build --configLoader runner",
     "preview": "vite preview --configLoader runner",
+    "export": "tsx scripts/export.ts",
     "analyze": "tsx scripts/analyze.ts",
     "test": "run-s test:*",
     "test:format": "oxfmt --check",
@@ -24,15 +25,19 @@
     "fix:lint": "oxlint --fix"
   },
   "dependencies": {
+    "@huggingface/transformers": "^4.3.1",
     "@react-three/drei": "^10.7.9",
     "@react-three/fiber": "^9.8.2",
     "@react-three/postprocessing": "^3.2.0",
+    "ky": "^2.2.0",
     "maath": "^0.10.8",
     "motion": "^14.4.0",
+    "p-map": "^7.1.1",
     "postprocessing": "^6.39.5",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "three": "^0.186.1",
+    "zod": "^4.6.7",
     "zustand": "^5.0.15"
   },
   "devDependencies": {

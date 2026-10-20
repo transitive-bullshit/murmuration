@@ -270,29 +270,28 @@ describe('tweet features', () => {
 })
 
 describe('closeness', () => {
-  test('rewards two-way relationships over one-way floods', () => {
-    const conversation = closenessScore({
-      out: 20,
-      in: 10,
-      dmIn: 200,
-      dmOut: 180,
-      mutualFollow: true
-    })
-    const spam = closenessScore({
+  const score = (c: Partial<Parameters<typeof closenessScore>[0]>) =>
+    closenessScore({
       out: 0,
       in: 0,
-      dmIn: 80_000,
-      dmOut: 0,
-      mutualFollow: false
+      dm: 0,
+      follower: false,
+      following: false,
+      ...c
     })
-    const fan = closenessScore({
-      out: 40,
-      in: 0,
-      dmIn: 0,
-      dmOut: 0,
-      mutualFollow: false
-    })
-    expect(conversation).toBeGreaterThan(fan)
+
+  test('ranks two-way public engagement above DMs and one-sided attention', () => {
+    const mutual = score({ out: 20, in: 5, follower: true, following: true })
+    const dmHeavy = score({ out: 3, dm: 300, follower: true, following: true })
+    const fan = score({ out: 40 })
+    // A one-way DM flood contributes nothing (dm counts only the two-way part).
+    const spam = score({ dm: 0 })
+    expect(mutual).toBeGreaterThan(dmHeavy)
+    expect(dmHeavy).toBeGreaterThan(fan)
     expect(fan).toBeGreaterThan(spam)
+  })
+
+  test('public mutual engagement needs both directions', () => {
+    expect(score({ out: 50, in: 5 })).toBeGreaterThan(2 * score({ out: 50 }))
   })
 })

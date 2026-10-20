@@ -16,15 +16,18 @@ export const fmtMultiple = (n: number) =>
       : `${n.toFixed(1)}×`
 
 const monthYear = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'UTC',
   month: 'short',
   year: 'numeric'
 })
 const dayMonthYear = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'UTC',
   month: 'short',
   day: 'numeric',
   year: 'numeric'
 })
 const dayMonth = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'UTC',
   month: 'short',
   day: 'numeric'
 })
@@ -36,7 +39,7 @@ export const fmtDayMonth = (t: number) => dayMonth.format(t * 1000)
 export function fmtRange(t0: number, t1: number) {
   const a = new Date(t0 * 1000)
   const b = new Date(t1 * 1000)
-  if (a.getFullYear() === b.getFullYear())
+  if (a.getUTCFullYear() === b.getUTCFullYear())
     return `${fmtDayMonth(t0)} – ${fmtDate(t1)}`
   return `${fmtDate(t0)} – ${fmtDate(t1)}`
 }

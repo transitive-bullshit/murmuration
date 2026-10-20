@@ -69,6 +69,8 @@ export interface TweetColumns {
   text: string[]
   /** first media preview URL, '' when none */
   media: string[]
+  /** AI captions of the first images, one per line; '' when none */
+  caption: string[]
 }
 
 export interface SemanticCluster {
@@ -211,6 +213,25 @@ export interface DatasetMeta {
   }
   range: { start: number; end: number }
   timings: Record<string, number>
+  /** what powered the semantic map */
+  embedding: {
+    /**
+     * The embedder that produced the vectors: 'openai' (when a key is set) or
+     * 'local' (transformers.js). Only a real fallback changes it; 'lsa' means
+     * no embedder worked and topics come from word statistics.
+     */
+    provider: 'openai' | 'local' | 'lsa'
+    model: string
+    dims: number
+    /** tweets with at least one image caption folded into their embedding */
+    captions: number
+    /** tweets with text but no vector this build (requests failed or are cooling down) */
+    missing: number
+    /** of those, tweets placed via their nearest TF-IDF neighbors' vectors */
+    imputed: number
+  }
+  /** user-facing notes about a degraded build (e.g. some images couldn't be described) */
+  warnings?: string[]
 }
 
 export interface Dataset {

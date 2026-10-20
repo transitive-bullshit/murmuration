@@ -1,6 +1,11 @@
 allowBuilds:
   esbuild: true
   simple-git-hooks: true
+  # macOS/Windows/Linux CPU binaries ship inside the package; the postinstall
+  # only fetches optional CUDA providers.
+  onnxruntime-node: false
+  # postinstall is only a version-compat check.
+  protobufjs: false
 
 enablePrePostScripts: true
 

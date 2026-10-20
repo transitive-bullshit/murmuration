@@ -129,7 +129,7 @@ function PersonDetail({ model, index }: { model: Model; index: number }) {
 
   return (
     <div className='flex flex-col gap-4'>
-      <PersonSummary model={model} index={index} />
+      <PersonSummary model={model} index={index} full />
       {timeline && (
         <div>
           <div className='eyebrow mb-2'>Closeness over time</div>

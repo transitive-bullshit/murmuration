@@ -32,6 +32,8 @@ export interface RawTweet {
   views: number
   mediaType: 'image' | 'video' | 'gif' | null
   mediaUrl: string
+  /** first two media images (video/gif thumbnails), for captioning */
+  mediaUrls?: string[]
   urls: string[]
   /** profile ids of mentioned accounts */
   mentions: string[]
@@ -149,13 +151,17 @@ interface MediaItem {
 
 function readMedia(
   mediaJson: unknown
-): Pick<RawTweet, 'mediaType' | 'mediaUrl'> {
+): Pick<RawTweet, 'mediaType' | 'mediaUrl' | 'mediaUrls'> {
   const media = parseJson<MediaItem[]>(mediaJson, [])
   const first = media[0]
-  if (!first) return { mediaType: null, mediaUrl: '' }
+  if (!first) return { mediaType: null, mediaUrl: '', mediaUrls: [] }
   const type =
     first.type === 'video' ? 'video' : first.type === 'gif' ? 'gif' : 'image'
-  return { mediaType: type, mediaUrl: first.thumbnailUrl ?? first.url ?? '' }
+  const urls = media
+    .slice(0, 2)
+    .map((m) => m.thumbnailUrl ?? m.url ?? '')
+    .filter(Boolean)
+  return { mediaType: type, mediaUrl: urls[0] ?? '', mediaUrls: urls }
 }
 
 function readEntities(

@@ -19,6 +19,11 @@ export const VIEWS = [
     hint: 'Followers and engagement over time, with inflection points'
   },
   {
+    id: 'bangers',
+    label: 'Bangers',
+    hint: 'Your biggest hits and outliers over time'
+  },
+  {
     id: 'anatomy',
     label: 'Anatomy',
     hint: 'Which kinds of tweets perform best, and how that changed'
@@ -31,6 +36,8 @@ export const VIEWS = [
 ] as const
 
 export type ViewId = (typeof VIEWS)[number]['id']
+
+export type BangerMode = 'engagement' | 'outlier'
 
 export type AnatomyGroup = 'format' | 'topic' | 'weekday' | 'hour' | 'length'
 export type Target = { type: 'tweet' | 'person'; index: number }
@@ -48,6 +55,7 @@ export interface AppState {
   hovered: Target | undefined
   selected: Target | undefined
   anatomyGroup: AnatomyGroup
+  bangerMode: BangerMode
   focusInflection: string | undefined
   /** semantic cluster to spotlight */
   focusCluster: number | undefined
@@ -69,6 +77,7 @@ export interface AppState {
   /** select and glide the camera to it */
   flyTo: (target: Target) => void
   setAnatomyGroup: (group: AnatomyGroup) => void
+  setBangerMode: (mode: BangerMode) => void
   setFocusInflection: (id: string | undefined) => void
   setFocusCluster: (id: number | undefined) => void
   setMediaPreviews: (on: boolean) => void
@@ -100,6 +109,7 @@ export const useApp = create<AppState>((set) => ({
   hovered: undefined,
   selected: undefined,
   anatomyGroup: readPref<AnatomyGroup>('anatomyGroup', 'format'),
+  bangerMode: readPref<BangerMode>('bangerMode', 'engagement'),
   focusInflection: undefined,
   focusCluster: undefined,
   mediaPreviews: readPref('mediaPreviews', true),
@@ -143,6 +153,10 @@ export const useApp = create<AppState>((set) => ({
   setAnatomyGroup: (anatomyGroup) => {
     writePref('anatomyGroup', anatomyGroup)
     set({ anatomyGroup })
+  },
+  setBangerMode: (bangerMode) => {
+    writePref('bangerMode', bangerMode)
+    set({ bangerMode })
   },
   setFocusInflection: (focusInflection) => set({ focusInflection }),
   setFocusCluster: (focusCluster) => set({ focusCluster }),

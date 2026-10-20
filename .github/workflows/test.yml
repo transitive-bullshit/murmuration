@@ -25,4 +25,5 @@ jobs:
 
       - run: pnpm install --frozen-lockfile --strict-peer-dependencies
       - run: pnpm test
-      - run: pnpm build
+      # No `pnpm build`: production builds publish data/dataset.json from
+      # `pnpm export`, which needs a local Birdclaw archive.
