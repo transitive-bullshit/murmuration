@@ -40,7 +40,7 @@ cpSync(
   path.join(stage, 'vercel-analytics.mjs')
 )
 
-// Same headers and Git settings as the repo's vercel.json; only how the
+// Same headers, rewrites and Git settings as the repo's vercel.json; only how the
 // upload is "built" differs.
 const repo = JSON.parse(readFileSync(path.join(root, 'vercel.json'), 'utf8'))
 const config = {
@@ -53,7 +53,8 @@ const config = {
   // its one-step build to get analytics.
   ignoreCommand: 'exit 1',
   git: repo.git,
-  headers: repo.headers
+  headers: repo.headers,
+  rewrites: repo.rewrites
 }
 writeFileSync(
   path.join(stage, 'vercel.json'),

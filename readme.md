@@ -2,17 +2,19 @@
 
 > A quiet 3D observatory for everything you've posted and loved on X.
 
-![Constellation: every tweet and like arranged by meaning](media/constellation.webp)
+**[Explore the live demo →](https://murmuration.transitivebullsh.it)**
+
+[![Constellation: every tweet and like arranged by meaning](media/constellation.webp)](https://murmuration.transitivebullsh.it/constellation)
 
 Murmuration turns your local [Birdclaw](https://birdclaw.sh) archive into a field of ~50k particles that flock between six views. It shows what you talk about, what lands, how your audience grew, why it grew when it did, and who you're closest to. Everything runs locally and reads your archive strictly read-only.
 
 <p>
-  <img src="media/growth-focus.webp" width="49%" alt="Growth: the Jan 2023 surge traced back to the tweets that caused it" />
-  <img src="media/strata.webp" width="49%" alt="Strata: tweets and likes stacked month by month, colored by topic" />
+  <a href="https://murmuration.transitivebullsh.it/growth"><img src="media/growth-focus.webp" width="49%" alt="Growth: the Jan 2023 surge traced back to the tweets that caused it" /></a>
+  <a href="https://murmuration.transitivebullsh.it/strata"><img src="media/strata.webp" width="49%" alt="Strata: tweets and likes stacked month by month, colored by topic" /></a>
 </p>
 <p>
-  <img src="media/anatomy.webp" width="49%" alt="Anatomy: which kinds of tweets perform best" />
-  <img src="media/orbit.webp" width="49%" alt="Orbit: followers, following, and your closest relationships" />
+  <a href="https://murmuration.transitivebullsh.it/anatomy"><img src="media/anatomy.webp" width="49%" alt="Anatomy: which kinds of tweets perform best" /></a>
+  <a href="https://murmuration.transitivebullsh.it/orbit"><img src="media/orbit.webp" width="49%" alt="Orbit: followers, following, and your closest relationships" /></a>
 </p>
 
 - **Constellation:** every tweet and like placed by meaning, with labeled topic nebulae and the topics where your tweets land best.

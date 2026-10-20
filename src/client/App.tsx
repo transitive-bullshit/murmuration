@@ -13,6 +13,7 @@ import { Timeline } from './ui/Timeline'
 import { TopBar } from './ui/TopBar'
 import { ViewPanel } from './ui/ViewPanel'
 import { useKeyboard } from './ui/useKeyboard'
+import { useViewUrl } from './ui/useViewUrl'
 
 export function App() {
   const model = useApp((s) => s.model)
@@ -21,6 +22,7 @@ export function App() {
   const [error, setError] = useState<string | undefined>()
   const [revealed, setRevealed] = useState(false)
   const mediaPreviews = useApp((s) => s.mediaPreviews)
+  useViewUrl()
 
   // Warm the connection to X's image CDN for hover cards and avatars, but
   // only when previews are on: with them off, the page never contacts X.

@@ -95,6 +95,15 @@ const readPref = <T>(key: string, fallback: T): T => {
     return fallback
   }
 }
+/** The view a URL path names (/strata, /orbit, …), if any. */
+export function viewFromPath(pathname: string, base = '/'): ViewId | undefined {
+  const rest = pathname.startsWith(base)
+    ? pathname.slice(base.length)
+    : pathname.replace(/^\//, '')
+  const segment = rest.replace(/\/+$/, '')
+  return VIEWS.find((v) => v.id === segment)?.id
+}
+
 const writePref = (key: string, value: unknown) => {
   try {
     localStorage.setItem(`murmuration:${key}`, JSON.stringify(value))
@@ -103,7 +112,12 @@ const writePref = (key: string, value: unknown) => {
 
 export const useApp = create<AppState>((set) => ({
   model: undefined,
-  view: readPref<ViewId>('view', 'constellation'),
+  // A view's own URL wins over the one remembered from last time.
+  view:
+    (typeof location === 'undefined'
+      ? undefined
+      : viewFromPath(location.pathname, import.meta.env.BASE_URL)) ??
+    readPref<ViewId>('view', 'constellation'),
   query: '',
   kinds: [true, true, true],
   range: undefined,

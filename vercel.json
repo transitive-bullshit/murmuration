@@ -50,5 +50,11 @@
         }
       ]
     }
+  ],
+  "rewrites": [
+    {
+      "source": "/:view(constellation|strata|growth|bangers|anatomy|orbit)",
+      "destination": "/index.html"
+    }
   ]
 }
