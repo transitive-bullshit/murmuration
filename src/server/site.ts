@@ -14,6 +14,11 @@ export const SHARE_IMAGE = {
   type: 'image/jpeg'
 } as const
 export const DATASET_PATH = '/data/dataset.json'
+/**
+ * <meta> that the deploy step on Vercel (scripts/vercel-analytics.mjs) fills
+ * with the project's Web Analytics paths; src/client/analytics.tsx reads it.
+ */
+export const ANALYTICS_META = 'murmuration:analytics'
 
 export interface SiteOptions {
   /** public origin, e.g. https://murmuration.example.com; links stay relative without it */
@@ -127,6 +132,7 @@ export function headTags(site: Site): HtmlTagDescriptor[] {
     meta({ name: 'application-name', content: SITE_NAME }),
     meta({ name: 'robots', content: 'index, follow, max-image-preview:large' }),
     link({ rel: 'apple-touch-icon', href: '/apple-touch-icon.png' }),
+    meta({ name: ANALYTICS_META, content: '{}' }),
     meta({ property: 'og:type', content: 'website' }),
     meta({ property: 'og:site_name', content: SITE_NAME }),
     meta({ property: 'og:locale', content: 'en_US' }),

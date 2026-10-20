@@ -73,7 +73,7 @@ The export contains your tweets, likes, bookmarks, follower and following lists,
 - `auditPrivateContent` fingerprints every DM and scans every exported string. A whole DM, or 60 or more consecutive characters of one, aborts the export unless all of the match also appears in your public tweets. Any copied stretch of 98 or more characters is guaranteed to be caught. Shorter shared phrases, such as an article title, are counted and reported.
 - DMs under 40 characters ("sounds good!") are too generic to fingerprint, so only the first layer, which never reads DM text, protects them.
 
-`pnpm build` fails without `data/dataset.json` and copies it into `dist/` under a content-hashed name (`data/dataset.<hash>.json`). The production app is fully static and loads that file; `pnpm preview` serves exactly that. `vercel.json` caches the hashed dataset and Vite's hashed `assets/` for a year as immutable (a new export gets a new name), and sets basic security headers (`nosniff`, a strict referrer policy, no camera, microphone or location access, and no framing by other sites). Production builds also load [Vercel Web Analytics](https://vercel.com/docs/analytics) (cookieless page views); enable it in the Vercel project, or it does nothing.
+`pnpm build` fails without `data/dataset.json` and copies it into `dist/` under a content-hashed name (`data/dataset.<hash>.json`). The production app is fully static and loads that file; `pnpm preview` serves exactly that. `vercel.json` caches the hashed dataset and Vite's hashed `assets/` for a year as immutable (a new export gets a new name), and sets basic security headers (`nosniff`, a strict referrer policy, no camera, microphone or location access, and no framing by other sites). Production builds also load [Vercel Web Analytics](https://vercel.com/docs/analytics) (cookieless page views, with each of the six views counted as its own page: `/constellation`, `/strata`, …); enable it in the Vercel project.
 
 Deploys run from your machine, because only your machine can make the data: the export needs your Birdclaw archive (and your OpenAI key), and `data/` is gitignored so the 22 MB export doesn't pile up in git history. Vercel needs no environment variables.
 
@@ -89,7 +89,7 @@ Then each deploy exports fresh data and ships it with Vercel's prebuilt flow:
 pnpm deploy:vercel
 ```
 
-That runs `pnpm export`, `vercel pull`, `vercel build --prod` and `vercel deploy --prebuilt --prod`. `vercel.json` turns off Git-triggered deploys (`git.deploymentEnabled: false`): a build on Vercel's servers has no data and would fail. `.vercelignore` keeps `.env` and `.cache/` out of uploads. To keep the site private, turn on Deployment Protection in the Vercel project settings.
+That runs `pnpm export` and `pnpm build`, then `scripts/deploy.ts` uploads `dist/` to production. Vercel only attaches Web Analytics to deployments it builds itself, so the upload has a one-step build on Vercel (`scripts/vercel-analytics.mjs`) that writes the project's analytics paths into the page; nothing else runs there, and the data and keys never leave your machine. Its `ignoreCommand` lets that step run even if the project is set to skip builds. `vercel.json` turns off Git-triggered deploys (`git.deploymentEnabled: false`): a build from Git has no data and would fail. `.vercelignore` keeps `.env` and `.cache/` out of uploads. To keep the site private, turn on Deployment Protection in the Vercel project settings.
 
 The build also writes the site's metadata from the export (`src/server/site.ts`): title and description, canonical link, Open Graph and X card tags, JSON-LD (site, author, app, source and dataset), a no-JavaScript fallback, `robots.txt`, `sitemap.xml` and [`llms.txt`](https://llmstxt.org). Absolute URLs use `SITE_URL`, else Vercel's production domain, else `homepage` in `package.json`; deploying your own copy, change `homepage`. The share image `public/og.jpg` (1200×630 JPEG) is a screenshot of the constellation; replace it with one of your own.
 
@@ -114,6 +114,7 @@ src/client/gl/          particle shader/field, camera, picking, overlays, effect
 src/client/ui/          panels, top bar, timeline, cards
 public/                 favicon, share image (og.jpg), apple-touch-icon
 scripts/export.ts       CLI for the full pipeline → data/dataset.json
+scripts/deploy.ts       uploads dist/ to Vercel (see Export and deploy)
 scripts/analyze.ts      CLI for building the cache
 data/                   the export (gitignored)
 test/                   vitest
