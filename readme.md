@@ -30,7 +30,7 @@ Requires Node 24+, pnpm, and a Birdclaw archive (`birdclaw import archive <your-
 pnpm install && pnpm dev
 ```
 
-Optionally, put an `OPENAI_API_KEY` in `.env` for better topics with image understanding (computed once per tweet). To publish a static snapshot with DM text stripped, run `pnpm export && pnpm build`.
+Optionally, put an `OPENAI_API_KEY` in `.env` for better topics with image understanding (computed once per tweet). To publish a static snapshot with DM text stripped, run `pnpm deploy:vercel` (setup in [contributing.md](contributing.md#export-and-deploy)).
 
 Or hand it to an agent:
 

@@ -12,6 +12,7 @@
     "build": "vite build --configLoader runner",
     "preview": "vite preview --configLoader runner",
     "export": "tsx scripts/export.ts",
+    "deploy:vercel": "pnpm export && vercel pull --yes --environment=production && vercel build --prod && vercel deploy --prebuilt --prod",
     "analyze": "tsx scripts/analyze.ts",
     "test": "run-s test:*",
     "test:format": "oxfmt --check",

@@ -73,16 +73,23 @@ The export contains your tweets, likes, bookmarks, follower and following lists,
 - `auditPrivateContent` fingerprints every DM and scans every exported string. A whole DM, or 60 or more consecutive characters of one, aborts the export unless all of the match also appears in your public tweets. Any copied stretch of 98 or more characters is guaranteed to be caught. Shorter shared phrases, such as an article title, are counted and reported.
 - DMs under 40 characters ("sounds good!") are too generic to fingerprint, so only the first layer, which never reads DM text, protects them.
 
-`pnpm build` fails without `data/dataset.json` and copies it into `dist/`. The production app is fully static and loads `/data/dataset.json`; `pnpm preview` serves exactly that. `data/` is gitignored, so deploy from your machine with Vercel's prebuilt flow (`vercel.json` holds the settings):
+`pnpm build` fails without `data/dataset.json` and copies it into `dist/`. The production app is fully static and loads `/data/dataset.json`; `pnpm preview` serves exactly that.
+
+Deploys run from your machine, because only your machine can make the data: the export needs your Birdclaw archive (and your OpenAI key), and `data/` is gitignored so the 22 MB export doesn't pile up in git history. Vercel needs no environment variables.
+
+Once, with the [Vercel CLI](https://vercel.com/docs/cli) installed, link the repo to a Vercel project:
 
 ```bash
-pnpm export
-vercel pull --yes --environment=production
-vercel build --prod
-vercel deploy --prebuilt --prod
+vercel link
 ```
 
-`.vercelignore` keeps `.env` and `.cache/` out of uploads in case you deploy from source instead. To keep the site private, turn on Deployment Protection in the Vercel project settings.
+Then each deploy exports fresh data and ships it with Vercel's prebuilt flow:
+
+```bash
+pnpm deploy:vercel
+```
+
+That runs `pnpm export`, `vercel pull`, `vercel build --prod` and `vercel deploy --prebuilt --prod`. `vercel.json` turns off Git-triggered deploys (`git.deploymentEnabled: false`): a build on Vercel's servers has no data and would fail. `.vercelignore` keeps `.env` and `.cache/` out of uploads. To keep the site private, turn on Deployment Protection in the Vercel project settings.
 
 ## Common tasks
 
