@@ -1,5 +1,10 @@
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+
 import { describe, expect, test } from 'vitest'
 
+import { writeExport } from '../src/server/exporter'
 import type { Dataset } from '../src/shared/types'
 import {
   DmFingerprints,
@@ -247,5 +252,46 @@ describe('auditExport with public passages', () => {
     // The quote alone is public and fine.
     ds.tweets.caption[0] = quote
     expect(auditExport(ds, fp).leaks).toEqual([])
+  })
+})
+
+describe('writeExport', () => {
+  const manifest = (exportedAt: string) => ({
+    format: 1,
+    exportedAt,
+    revision: 1,
+    source: { size: 1, mtimeMs: 1 },
+    audit: {
+      messages: 0,
+      fingerprinted: 0,
+      publicOverlap: 0,
+      sharedPhrases: 0,
+      strings: 0,
+      chars: 0,
+      leaks: []
+    }
+  })
+
+  test('keeps an identical export byte-for-byte, timestamp included', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'murmuration-export-'))
+    try {
+      const file = path.join(dir, 'data', 'dataset.json')
+      const data = toPublicDataset(fixture())
+      const first = writeExport(file, data, manifest('2026-01-01T00:00:00Z'))
+      expect(first.unchanged).toBe(false)
+      const before = readFileSync(file)
+
+      const again = writeExport(file, data, manifest('2026-02-02T00:00:00Z'))
+      expect(again.unchanged).toBe(true)
+      expect(again.manifest.exportedAt).toBe('2026-01-01T00:00:00Z')
+      expect(readFileSync(file).equals(before)).toBe(true)
+
+      data.meta.counts.mine += 1
+      const changed = writeExport(file, data, manifest('2026-03-03T00:00:00Z'))
+      expect(changed.unchanged).toBe(false)
+      expect(readFileSync(file, 'utf8')).toContain('2026-03-03T00:00:00Z')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

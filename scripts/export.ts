@@ -134,8 +134,8 @@ try {
   )
   for (const w of result.warnings) row('Warning', w)
   row(
-    'Wrote',
-    `${EXPORT_FILE} · ${mb(result.bytes)} (${mb(result.gzipBytes)} gzipped)`
+    result.unchanged ? 'Unchanged' : 'Wrote',
+    `${EXPORT_FILE} · ${mb(result.bytes)} (${mb(result.gzipBytes)} gzipped)${result.unchanged ? ` · same data as the ${result.manifest.exportedAt.slice(0, 10)} export, so its URL and visitors' caches stay valid` : ''}`
   )
   row(
     'Next',

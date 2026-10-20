@@ -1,4 +1,5 @@
 import {
+  existsSync,
   mkdirSync,
   readFileSync,
   renameSync,
@@ -52,6 +53,8 @@ export interface ExportResult {
   manifest: ExportManifest
   /** notes about a degraded build (not published) */
   warnings: string[]
+  /** the data matched the previous export, so its file (and URL) stayed as-is */
+  unchanged: boolean
 }
 
 /**
@@ -100,29 +103,63 @@ export async function runExport(options: ExportOptions): Promise<ExportResult> {
     )
 
   report('Writing the export', 0)
-  const manifest: ExportManifest = {
+  const file = exportPath(root)
+  const written = writeExport(file, data, {
     format: EXPORT_FORMAT,
     exportedAt: new Date().toISOString(),
     revision: PIPELINE_REVISION,
     source: { size: source.size, mtimeMs: source.mtimeMs },
     audit
+  })
+  return {
+    file,
+    bytes: written.json.byteLength,
+    gzipBytes: gzipSync(written.json, { level: 6 }).byteLength,
+    dataset: data,
+    manifest: written.manifest,
+    warnings: dataset.meta.warnings ?? [],
+    unchanged: written.unchanged
   }
-  const json = Buffer.from(
-    JSON.stringify({ ...data, export: manifest } satisfies PublicExport)
-  )
-  const file = exportPath(root)
+}
+
+/**
+ * Writes the export atomically. If only the timestamp would change, the
+ * previous file stays byte-for-byte: production publishes it under a content
+ * hash with immutable caching, so re-exporting unchanged data (e.g. a
+ * code-only deploy) must not make every visitor download it again.
+ */
+export function writeExport(
+  file: string,
+  data: Dataset,
+  manifest: ExportManifest
+): { json: Buffer; manifest: ExportManifest; unchanged: boolean } {
+  const serialize = (m: ExportManifest) =>
+    Buffer.from(JSON.stringify({ ...data, export: m } satisfies PublicExport))
+  if (existsSync(file)) {
+    const previous = readFileSync(file)
+    try {
+      const { exportedAt } = (
+        JSON.parse(previous.toString('utf8')) as Partial<PublicExport>
+      ).export ?? { exportedAt: undefined }
+      if (exportedAt) {
+        const same = serialize({ ...manifest, exportedAt })
+        if (same.equals(previous))
+          return {
+            json: previous,
+            manifest: { ...manifest, exportedAt },
+            unchanged: true
+          }
+      }
+    } catch {
+      // unreadable previous export: replace it
+    }
+  }
+  const json = serialize(manifest)
   mkdirSync(path.dirname(file), { recursive: true })
   const tmp = `${file}.${randomUUID()}.tmp`
   writeFileSync(tmp, json)
   renameSync(tmp, file)
-  return {
-    file,
-    bytes: json.byteLength,
-    gzipBytes: gzipSync(json, { level: 6 }).byteLength,
-    dataset: data,
-    manifest,
-    warnings: dataset.meta.warnings ?? []
-  }
+  return { json, manifest, unchanged: false }
 }
 
 /**
