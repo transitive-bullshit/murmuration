@@ -20,6 +20,18 @@ export function App() {
   const [status, setStatus] = useState<Status | undefined>()
   const [error, setError] = useState<string | undefined>()
   const [revealed, setRevealed] = useState(false)
+  const mediaPreviews = useApp((s) => s.mediaPreviews)
+
+  // Warm the connection to X's image CDN for hover cards and avatars, but
+  // only when previews are on: with them off, the page never contacts X.
+  useEffect(() => {
+    if (!mediaPreviews) return
+    const link = document.createElement('link')
+    link.rel = 'preconnect'
+    link.href = 'https://pbs.twimg.com'
+    document.head.append(link)
+    return () => link.remove()
+  }, [mediaPreviews])
 
   useEffect(() => {
     let cancelled = false

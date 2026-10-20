@@ -22,6 +22,8 @@ export interface SiteOptions {
   repository?: string
   /** size of the published dataset in bytes */
   datasetBytes: number
+  /** where the dataset is published; content-hashed in production builds */
+  datasetPath?: string
 }
 
 export interface Site {
@@ -34,6 +36,7 @@ export interface Site {
   name: string
   repository: string | undefined
   datasetBytes: number
+  datasetPath: string
   ds: Pick<Dataset, 'meta' | 'clusters'>
 }
 
@@ -91,6 +94,7 @@ export function describeSite(
     name,
     repository: options.repository,
     datasetBytes: options.datasetBytes,
+    datasetPath: options.datasetPath ?? DATASET_PATH,
     ds
   }
 }
@@ -220,7 +224,7 @@ export function jsonLd(site: Site) {
       distribution: {
         '@type': 'DataDownload',
         encodingFormat: 'application/json',
-        contentUrl: href(site, DATASET_PATH),
+        contentUrl: href(site, site.datasetPath),
         contentSize: megabytes(site.datasetBytes)
       }
     }
@@ -256,7 +260,7 @@ function noscript(site: Site) {
   return [
     `<h1>${escapeHtml(site.shareTitle)}</h1>`,
     `<p>${escapeHtml(site.description)}</p>`,
-    `<p>This interactive 3D map needs JavaScript and WebGL. The data behind it is at <a href="${DATASET_PATH}">${DATASET_PATH}</a>, described in <a href="/llms.txt">/llms.txt</a>.</p>`
+    `<p>This interactive 3D map needs JavaScript and WebGL. The data behind it is at <a href="${site.datasetPath}">${site.datasetPath}</a>, described in <a href="/llms.txt">/llms.txt</a>.</p>`
   ].join('')
 }
 
@@ -297,7 +301,7 @@ export function llmsTxt(site: Site) {
     '',
     '## Data',
     '',
-    `- [dataset.json](${href(site, DATASET_PATH)}): the whole dataset (${megabytes(site.datasetBytes)}, JSON). Tables are columnar: parallel arrays indexed by row.`,
+    `- [dataset.json](${href(site, site.datasetPath)}): the whole dataset (${megabytes(site.datasetBytes)}, JSON). Tables are columnar: parallel arrays indexed by row.`,
     '  - `meta`: account, counts, date range (unix seconds) and how topics were computed.',
     "  - `tweets`: `id`, `kind` (0 = their tweet, 1 = like, 2 = bookmark), `t` (posted, unix seconds; X doesn't record when a like happened), `likes`, `rts`, `replies`, `quotes`, `views` (-1 when unknown), `text`, `media` (first image URL), `caption` (AI image description), `author` (row in `people`, -1 when unknown), `cluster` (row in `clusters`, -1 when unclustered), `lift` and `outlier` (engagement versus their typical tweet at the time).",
     '  - `clusters`: topic labels, top terms and sizes.',

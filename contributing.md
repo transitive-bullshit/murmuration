@@ -43,7 +43,7 @@ pnpm test             # format, lint, types, unit tests (offline)
 | Topics and 3D map | `src/server/semantic/` | embeddings → PCA (or TF-IDF → LSA without embeddings) → kNN graph → spherical k-means → outlier refinement → c-TF-IDF labels → 3D UMAP |
 | Assemble and cache | `src/server/dataset.ts`, `src/server/cache.ts` | `.cache/dataset.json.gz` |
 | Export | `scripts/export.ts`, `src/server/exporter.ts`, `src/server/publicExport.ts` | `data/dataset.json`: allowlisted fields, audited for DM text |
-| Serve | `src/server/plugin.ts` | dev: `/api/status`, `/api/dataset`, `POST /api/rebuild`. Build: requires the export and ships it as `dist/data/dataset.json` |
+| Serve | `src/server/plugin.ts` | dev: `/api/status`, `/api/dataset`, `POST /api/rebuild`. Build: requires the export and ships it as `dist/data/dataset.<hash>.json` |
 | Views | `src/client/layouts/*`, `src/client/gl/*` | particle layouts + overlays per view |
 
 ### Follower history
@@ -73,7 +73,7 @@ The export contains your tweets, likes, bookmarks, follower and following lists,
 - `auditPrivateContent` fingerprints every DM and scans every exported string. A whole DM, or 60 or more consecutive characters of one, aborts the export unless all of the match also appears in your public tweets. Any copied stretch of 98 or more characters is guaranteed to be caught. Shorter shared phrases, such as an article title, are counted and reported.
 - DMs under 40 characters ("sounds good!") are too generic to fingerprint, so only the first layer, which never reads DM text, protects them.
 
-`pnpm build` fails without `data/dataset.json` and copies it into `dist/`. The production app is fully static and loads `/data/dataset.json`; `pnpm preview` serves exactly that.
+`pnpm build` fails without `data/dataset.json` and copies it into `dist/` under a content-hashed name (`data/dataset.<hash>.json`). The production app is fully static and loads that file; `pnpm preview` serves exactly that. `vercel.json` caches the hashed dataset and Vite's hashed `assets/` for a year as immutable (a new export gets a new name), and sets basic security headers (`nosniff`, a strict referrer policy, no camera, microphone or location access, and no framing by other sites).
 
 Deploys run from your machine, because only your machine can make the data: the export needs your Birdclaw archive (and your OpenAI key), and `data/` is gitignored so the 22 MB export doesn't pile up in git history. Vercel needs no environment variables.
 

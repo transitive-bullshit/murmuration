@@ -36,7 +36,8 @@ const ds = {
 const site = describeSite(ds, {
   origin: 'https://example.com',
   repository: 'https://github.com/jane/murmuration',
-  datasetBytes: 22_300_000
+  datasetBytes: 22_300_000,
+  datasetPath: '/data/dataset.0123456789ab.json'
 })
 const relative = describeSite(ds, { datasetBytes: 1 })
 
@@ -111,7 +112,7 @@ describe('structured data', () => {
     expect(dataset.temporalCoverage).toBe('2011-06-30/2026-10-20')
     expect(dataset.keywords).toEqual(['ai', 'agents', 'webgl', 'threejs'])
     expect(dataset.distribution).toMatchObject({
-      contentUrl: 'https://example.com/data/dataset.json',
+      contentUrl: 'https://example.com/data/dataset.0123456789ab.json',
       contentSize: '22.3 MB'
     })
   })
@@ -137,7 +138,7 @@ describe('crawler files', () => {
     expect(lines[0]).toMatch(/^# Murmuration/)
     expect(lines[2]).toMatch(/^> .*2011–2026/)
     expect(text).toContain(
-      '[dataset.json](https://example.com/data/dataset.json)'
+      '[dataset.json](https://example.com/data/dataset.0123456789ab.json)'
     )
     // Largest topic first.
     expect(text.indexOf('ai · agents')).toBeLessThan(

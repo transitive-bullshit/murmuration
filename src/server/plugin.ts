@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import path from 'node:path'
@@ -36,12 +37,14 @@ type Next = (err?: unknown) => void
  *   POST /api/rebuild  re-read the archive (and re-export, when serving one)
  *
  * Build: production is static. It fails without the export, ships it as
- * dist/data/dataset.json, and has no API or archive access.
+ * dist/data/dataset.<content hash>.json, and has no API or archive access.
  */
 export function murmurationData(): Plugin {
   let store: DatasetStore | undefined
   let snapshot: ExportStore | undefined
   let published: Buffer | undefined
+  // Content-hashed, so the CDN and browsers can cache it forever.
+  let publishedFile = EXPORT_FILE
   let base = '/'
   let root = process.cwd()
   let site: Site | undefined
@@ -63,7 +66,8 @@ export function murmurationData(): Plugin {
     site = describeSite(ds, {
       origin,
       repository: repository?.replace(/^git\+/, '').replace(/\.git$/, ''),
-      datasetBytes: published!.byteLength
+      datasetBytes: published!.byteLength,
+      datasetPath: `/${publishedFile}`
     })
     return site
   }
@@ -125,9 +129,13 @@ export function murmurationData(): Plugin {
           `[murmuration] publishing ${EXPORT_FILE} from ${manifest.exportedAt.slice(0, 10)}, but ${stale}; run \`pnpm export\` to refresh it`
         )
       published = raw
+      const hash = createHash('sha256').update(raw).digest('hex').slice(0, 12)
+      publishedFile = EXPORT_FILE.replace(/\.json$/, `.${hash}.json`)
       return {
         define: {
-          'import.meta.env.MURMURATION_DATASET_BYTES': String(raw.byteLength)
+          'import.meta.env.MURMURATION_DATASET_BYTES': String(raw.byteLength),
+          'import.meta.env.MURMURATION_DATASET_PATH':
+            JSON.stringify(publishedFile)
         }
       }
     },
@@ -158,7 +166,7 @@ export function murmurationData(): Plugin {
             tag: 'link',
             attrs: {
               rel: 'preload',
-              href: `${base}${EXPORT_FILE}`,
+              href: `${base}${publishedFile}`,
               as: 'fetch',
               crossorigin: true
             },
@@ -170,7 +178,11 @@ export function murmurationData(): Plugin {
     },
     generateBundle() {
       if (!published) return
-      this.emitFile({ type: 'asset', fileName: EXPORT_FILE, source: published })
+      this.emitFile({
+        type: 'asset',
+        fileName: publishedFile,
+        source: published
+      })
       const info = describe()
       const files: Record<string, string | undefined> = {
         'robots.txt': robotsTxt(info),

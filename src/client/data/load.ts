@@ -54,7 +54,9 @@ async function loadExport(
     })
   report(0)
   // Preloaded from index.html, so the download overlaps the app's own.
-  const res = await fetch(`${import.meta.env.BASE_URL}data/dataset.json`)
+  const res = await fetch(
+    `${import.meta.env.BASE_URL}${import.meta.env.MURMURATION_DATASET_PATH ?? 'data/dataset.json'}`
+  )
   if (!res.ok) throw new Error(`Dataset request failed (${res.status})`)
   // The CDN compresses the file, so Content-Length isn't the decoded size;
   // the build records that instead.
