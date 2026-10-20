@@ -62,6 +62,8 @@ export interface AppState {
   mediaPreviews: boolean
   /** bumps when the camera should glide back to the view's home pose */
   cameraHome: number
+  /** the idle camera is slowly turning on its own */
+  autoRotating: boolean
   /** a selection the camera should fly to (from lists, not scene clicks) */
   flyTarget: (Target & { nonce: number }) | undefined
 
@@ -81,6 +83,7 @@ export interface AppState {
   setFocusInflection: (id: string | undefined) => void
   setFocusCluster: (id: number | undefined) => void
   setMediaPreviews: (on: boolean) => void
+  setAutoRotating: (on: boolean) => void
   goHome: () => void
 }
 
@@ -114,6 +117,7 @@ export const useApp = create<AppState>((set) => ({
   focusCluster: undefined,
   mediaPreviews: readPref('mediaPreviews', true),
   cameraHome: 0,
+  autoRotating: false,
   flyTarget: undefined,
 
   setModel: (model) => set({ model }),
@@ -160,6 +164,7 @@ export const useApp = create<AppState>((set) => ({
   },
   setFocusInflection: (focusInflection) => set({ focusInflection }),
   setFocusCluster: (focusCluster) => set({ focusCluster }),
+  setAutoRotating: (autoRotating) => set({ autoRotating }),
   setMediaPreviews: (mediaPreviews) => {
     writePref('mediaPreviews', mediaPreviews)
     set({ mediaPreviews })

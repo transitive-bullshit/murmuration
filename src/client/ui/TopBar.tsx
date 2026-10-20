@@ -18,10 +18,25 @@ export function TopBar({ model }: { model: Model }) {
           <div className='font-display text-[17px] font-semibold leading-none tracking-[-0.02em] text-ink'>
             murmuration
           </div>
-          <div className='mt-1 truncate text-[11.5px] text-ink-3 tabular'>
-            @{meta.account.handle} · {fmtCompact(meta.counts.mine)} tweets ·{' '}
-            {fmtCompact(meta.counts.likes)} likes ·{' '}
-            {fmtCompact(meta.counts.followers)} followers
+          {/* When space runs out, tweets and likes truncate first; the handle
+              and follower count go last. */}
+          <div className='mt-1 flex min-w-0 overflow-hidden whitespace-nowrap text-[11.5px] text-ink-3 tabular'>
+            <a
+              href={`https://x.com/${meta.account.handle}`}
+              target='_blank'
+              rel='noreferrer'
+              title='Open your X profile'
+              className='shrink-0 transition-colors hover:text-ink'
+            >
+              @{meta.account.handle}
+            </a>
+            <span className='shrink-0'>
+              &nbsp;· {fmtCompact(meta.counts.followers)} followers
+            </span>
+            <span className='min-w-0 truncate'>
+              &nbsp;· {fmtCompact(meta.counts.mine)} tweets ·{' '}
+              {fmtCompact(meta.counts.likes)} likes
+            </span>
           </div>
         </div>
       </div>
@@ -156,7 +171,8 @@ function Search({ model }: { model: Model }) {
 
   return (
     <div className='relative'>
-      <label className='glass group flex h-9 w-[clamp(180px,22vw,290px)] items-center gap-2 rounded-full px-3 text-[12.5px] transition-[border-color] focus-within:border-white/20'>
+      {/* Narrow until wide screens, so the header's stats keep their room. */}
+      <label className='glass group flex h-9 w-[200px] min-[1500px]:w-[clamp(200px,22vw,290px)] items-center gap-2 rounded-full px-3 text-[12.5px] transition-[border-color] focus-within:border-white/20'>
         <svg
           viewBox='0 0 16 16'
           className='size-3.5 shrink-0 text-ink-3'

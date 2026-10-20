@@ -41,6 +41,16 @@ const AUTO_ROTATE: Partial<Record<ViewId, number>> = {
   constellation: 0.035,
   orbit: 0.02
 }
+// The idle camera turns only after this long without any input (pointer,
+// wheel, keys) or anything in focus…
+const IDLE_MS = 8000
+// …then eases in over this long, and stops the moment you're back.
+const SPIN_UP_MS = 2500
+// Closer than this share of the view's home distance counts as zoomed in.
+const ZOOMED_IN = 0.8
+// Orbit target this far from home (share of home distance) counts as panned
+// to a sub-region.
+const PANNED_AWAY = 0.2
 
 /** Width in CSS px taken by the left insight panel (0 on narrow screens). */
 export const leftPanelWidth = (width: number) => (width >= 1100 ? 362 : 0)
@@ -53,7 +63,9 @@ export const leftPanelWidth = (width: number) => (width >= 1100 ? 362 : 0)
  *   under the cursor (the hovered particle when there is one), which stays
  *   pinned to the same pixel for the whole gesture;
  * - two-finger trackpad scrolling pans, like a map;
- * - drag orbits; right-drag or shift-drag pans (camera-controls).
+ * - drag orbits; right-drag or shift-drag pans (camera-controls);
+ * - Constellation and Orbit slowly turn on their own once you've been idle a
+ *   while with nothing hovered, selected, focused or zoomed into.
  */
 export function CameraRig({
   focus,
@@ -73,6 +85,10 @@ export function CameraRig({
     | HTMLElement
     | undefined
   const lastInteraction = useRef(0)
+  // Last frame something held the camera still (hover, selection, zoom).
+  const lastEngaged = useRef(0)
+  const spinning = useRef(false)
+  const homePose = useRef<Pose | undefined>(undefined)
   const panel = leftPanelWidth(size.width)
   const zoom = useRef({ pending: 0, anchor: new THREE.Vector3() })
   const anchorRef = useRef(anchorFor)
@@ -99,9 +115,13 @@ export function CameraRig({
   useEffect(() => {
     const controls = ref.current
     if (!controls) return
-    const pose =
-      focus ??
-      fitPose(FRAMINGS[view], camera.fov, (size.width - panel) / size.height)
+    const home = fitPose(
+      FRAMINGS[view],
+      camera.fov,
+      (size.width - panel) / size.height
+    )
+    homePose.current = home
+    const pose = focus ?? home
     zoom.current.pending = 0
     controls.smoothTime = 0.85
     void controls.setLookAt(...pose.position, ...pose.target, true)
@@ -119,9 +139,15 @@ export function CameraRig({
     }
     controls.addEventListener('controlstart', mark)
     controls.addEventListener('control', mark)
+    // Any input anywhere in the app (moving toward another cluster, reading a
+    // panel, typing) postpones auto-rotation.
+    const options = { capture: true, passive: true }
+    const inputs = ['pointermove', 'pointerdown', 'wheel', 'keydown'] as const
+    for (const type of inputs) window.addEventListener(type, mark, options)
     return () => {
       controls.removeEventListener('controlstart', mark)
       controls.removeEventListener('control', mark)
+      for (const type of inputs) window.removeEventListener(type, mark, options)
     }
   }, [])
 
@@ -267,11 +293,38 @@ export function CameraRig({
       )
     }
 
+    // Auto-rotate only when nothing has your attention: no hover, selection,
+    // focused topic or camera focus, and the camera at its home framing.
+    const now = performance.now()
     const speed = AUTO_ROTATE[view]
-    if (!speed || focus) return
-    if (performance.now() - lastInteraction.current < 5000) return
-    controls.azimuthAngle += delta * speed
+    const app = useApp.getState()
+    if (
+      !speed ||
+      focus ||
+      app.hovered ||
+      app.selected ||
+      app.focusCluster !== undefined ||
+      isExamining(controls, homePose.current, position.current, target.current)
+    )
+      lastEngaged.current = now
+    const quiet = now - Math.max(lastInteraction.current, lastEngaged.current)
+    const spin = speed && quiet > IDLE_MS
+    if (spin) {
+      const ramp = Math.min(1, (quiet - IDLE_MS) / SPIN_UP_MS)
+      controls.azimuthAngle += delta * speed * ramp * ramp * (3 - 2 * ramp)
+    }
+    if (spin !== spinning.current) {
+      spinning.current = !!spin
+      app.setAutoRotating(!!spin)
+    }
   })
+
+  useEffect(
+    () => () => {
+      if (spinning.current) useApp.getState().setAutoRotating(false)
+    },
+    []
+  )
 
   return (
     <CameraControls
@@ -282,6 +335,32 @@ export function CameraRig({
       truckSpeed={1.2}
       draggingSmoothTime={0.12}
     />
+  )
+}
+
+/** Zoomed in on, or panned over to, part of the scene. */
+function isExamining(
+  controls: CameraControlsImpl,
+  home: Pose | undefined,
+  position: THREE.Vector3,
+  target: THREE.Vector3
+) {
+  if (!home) return false
+  controls.getPosition(position)
+  controls.getTarget(target)
+  const homeDistance = Math.hypot(
+    home.position[0] - home.target[0],
+    home.position[1] - home.target[1],
+    home.position[2] - home.target[2]
+  )
+  const offset = Math.hypot(
+    target.x - home.target[0],
+    target.y - home.target[1],
+    target.z - home.target[2]
+  )
+  return (
+    position.distanceTo(target) < homeDistance * ZOOMED_IN ||
+    offset > homeDistance * PANNED_AWAY
   )
 }
 

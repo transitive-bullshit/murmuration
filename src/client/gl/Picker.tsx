@@ -2,6 +2,7 @@ import { useFrame, useThree } from '@react-three/fiber'
 import { useEffect, useRef, type RefObject } from 'react'
 import * as THREE from 'three'
 
+import { useApp } from '../store'
 import type { FieldHandle } from './ParticleField'
 
 /**
@@ -121,10 +122,11 @@ export function Picker({
   useFrame(() => {
     const f = field.current
     if (!f) return
-    // Camera motion (including auto-rotate) or new targets invalidate the hit.
+    // Camera motion or new targets invalidate the hit. Auto-rotation doesn't:
+    // a resting cursor shouldn't pick up whatever drifts beneath it.
     if (!lastView.current.equals(camera.matrixWorldInverse)) {
       lastView.current.copy(camera.matrixWorldInverse)
-      dirty.current = true
+      if (!useApp.getState().autoRotating) dirty.current = true
     }
     if (f.version() !== lastVersion.current) {
       lastVersion.current = f.version()
