@@ -29,6 +29,7 @@ import {
   StrataOverlay
 } from './overlays'
 import { ParticleField, type FieldHandle } from './ParticleField'
+import { PauseWhenHidden } from './PauseWhenHidden'
 import { Picker } from './Picker'
 import { usePeopleVisibility, useTweetVisibility } from './visibility'
 
@@ -215,6 +216,7 @@ export function Scene({ model }: { model: Model }) {
     <>
       <color attach='background' args={['#030406']} />
       <fog attach='fog' args={['#030406', 26, 62]} />
+      <PauseWhenHidden />
       <CameraRig focus={focus} anchorFor={anchorFor} />
 
       <ParticleField

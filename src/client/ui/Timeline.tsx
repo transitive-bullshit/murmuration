@@ -68,7 +68,8 @@ export function Timeline({ model }: { model: Model }) {
     let cur = useApp.getState().playhead ?? d0
     let lastSet = 0
     const tick = (now: number) => {
-      const dt = (now - last) / 1000
+      // Capped, so a hidden tab or a stall resumes playback where it was.
+      const dt = Math.min((now - last) / 1000, 1 / 20)
       last = now
       const s = useApp.getState()
       cur += ((d1 - d0) / 22) * dt

@@ -263,12 +263,15 @@ export function CameraRig({
   useFrame((_, delta) => {
     const controls = ref.current
     if (!controls) return
+    // After a stall (a frozen or throttled page), carry on from where things
+    // were instead of catching up on the lost time in one jump.
+    const dt = Math.min(delta, 1 / 20)
 
     // Apply queued zoom as a scaling about the anchor point: both camera and
     // target move toward it, so it keeps its exact spot on screen.
     const z = zoom.current
     if (Math.abs(z.pending) > 1e-4) {
-      const step = z.pending * (1 - Math.exp(-delta / ZOOM_SMOOTHING))
+      const step = z.pending * (1 - Math.exp(-dt / ZOOM_SMOOTHING))
       z.pending -= step
       controls.getPosition(position.current)
       controls.getTarget(target.current)
@@ -311,7 +314,7 @@ export function CameraRig({
     const spin = speed && quiet > IDLE_MS
     if (spin) {
       const ramp = Math.min(1, (quiet - IDLE_MS) / SPIN_UP_MS)
-      controls.azimuthAngle += delta * speed * ramp * ramp * (3 - 2 * ramp)
+      controls.azimuthAngle += dt * speed * ramp * ramp * (3 - 2 * ramp)
     }
     if (spin !== spinning.current) {
       spinning.current = !!spin
