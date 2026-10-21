@@ -11,6 +11,7 @@ import { createClock } from '../semantic/scheduler'
 import { VectorCache, dequantizeInto, quantize, vectorKey } from './cache'
 import {
   captionImages,
+  imageGone,
   planCaptions,
   type BatchCaptioner,
   type Captioner
@@ -378,6 +379,7 @@ export async function captionTweetImages(
     batchCaptioner,
     groupSize: 8,
     classify: classifyError,
+    gone: imageGone,
     concurrency: 16,
     cachedOnly: options.cachedOnly,
     paused: options.paused,

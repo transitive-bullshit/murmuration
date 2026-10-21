@@ -11,7 +11,9 @@ import { errorText, fanout, type FanoutProgress } from '../fanout'
 // captioned several per request; if a group fails, its images are retried
 // one per request so one bad image can't sink its neighbors. Failed images
 // are recorded and retried on later runs after a growing cooldown, not on
-// every rebuild.
+// every rebuild. Images that no longer exist (deleted on X) are expected:
+// they're recorded as gone, never requested again, and don't count as
+// failures.
 
 export type Captioner = (url: string, signal?: AbortSignal) => Promise<string>
 export type BatchCaptioner = (
@@ -28,6 +30,8 @@ export interface CaptionOptions {
   groupSize?: number
   /** 'fatal' (bad key, missing model) stops the run; anything else is the image's problem */
   classify?: (err: unknown) => 'fatal' | 'item'
+  /** checked after an image's request fails: true when the image itself is gone */
+  gone?: (url: string, signal?: AbortSignal) => Promise<boolean>
   concurrency?: number
   now?: () => number
   /** request nothing and return what's cached (the build held paid work back) */
@@ -46,6 +50,8 @@ export interface CaptionResult {
   /** images requested in this run */
   requested: number
   failed: number
+  /** images that no longer exist, recorded so they're never requested again */
+  missing: number
   /** images left unrequested because `paused()` turned true */
   paused: number
   /** user-facing note when many images failed */
@@ -58,6 +64,7 @@ const Line = z.object({
   url: z.string(),
   caption: z.string().optional(),
   error: z.string().optional(),
+  gone: z.boolean().optional(),
   at: z.number().optional(),
   attempts: z.number().int().optional()
 })
@@ -85,7 +92,7 @@ function readLines(file: string): { latest: Map<string, Line>; lines: number } {
 
 function due(line: Line | undefined, now: number): boolean {
   if (!line) return true
-  if (line.caption) return false
+  if (line.caption || line.gone) return false
   const attempts = line.attempts ?? 1
   return (
     attempts < MAX_ATTEMPTS &&
@@ -127,6 +134,23 @@ export function planCaptions(
   }
 }
 
+/** Whether an image is gone for good (404 or 410), e.g. media deleted on X. */
+export async function imageGone(
+  url: string,
+  signal?: AbortSignal
+): Promise<boolean> {
+  const timeout = AbortSignal.timeout(10_000)
+  try {
+    const res = await fetch(url, {
+      method: 'HEAD',
+      signal: signal ? AbortSignal.any([signal, timeout]) : timeout
+    })
+    return res.status === 404 || res.status === 410
+  } catch {
+    return false
+  }
+}
+
 export async function captionImages(
   urls: readonly string[],
   options: CaptionOptions
@@ -162,6 +186,7 @@ export async function captionImages(
 
   let imagesDone = 0
   let imagesFailed = 0
+  let imagesMissing = 0
   const succeed = (url: string, caption: string) => {
     if (!caption) return fail(url, new Error('empty caption'))
     record({ url, caption })
@@ -178,12 +203,19 @@ export async function captionImages(
     })
     return false
   }
+  const missing = (url: string) => {
+    imagesMissing++
+    record({ url, gone: true, at: now() })
+    return true
+  }
   const single = async (url: string, signal: AbortSignal) => {
     try {
       return succeed(url, await options.captioner(url, signal))
     } catch (err) {
       if (fatal(err) || signal.aborted) throw err
-      return fail(url, err)
+      const gone = await options.gone?.(url, signal)
+      if (signal.aborted) throw err
+      return gone ? missing(url) : fail(url, err)
     }
   }
 
@@ -220,7 +252,8 @@ export async function captionImages(
         } finally {
           imagesDone += group.length
         }
-        // A group where every image failed counts against the error budget.
+        // A group where every image failed (none captioned or gone) counts
+        // against the error budget.
         if (!ok) throw new Error(`all ${group.length} images failed`)
       },
       {
@@ -244,6 +277,10 @@ export async function captionImages(
     error = err
   }
   await writes
+  if (imagesMissing)
+    log(
+      `[murmuration] image captions: skipped ${imagesMissing.toLocaleString()} images that no longer exist`
+    )
 
   const warning =
     imagesFailed > 20 ||
@@ -254,6 +291,7 @@ export async function captionImages(
     captions: cachedCaptions(latest, unique),
     requested: todo.length,
     failed: imagesFailed,
+    missing: imagesMissing,
     paused,
     warning,
     error

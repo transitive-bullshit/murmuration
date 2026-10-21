@@ -10,7 +10,7 @@ import {
   type Embedder,
   type EmbedderSpec
 } from '../src/server/embed'
-import { captionImages } from '../src/server/embed/captions'
+import { captionImages, planCaptions } from '../src/server/embed/captions'
 import { openaiCaptioner, openaiEmbedder } from '../src/server/embed/openai'
 
 const DIM = 8
@@ -235,6 +235,52 @@ describe('captionImages', () => {
     expect(result.captions.get('u4')).toBe('single u4')
     expect(result.captions.has('bad')).toBe(false)
     expect(result.error).toBeUndefined()
+  })
+
+  it('records deleted images as gone, not failures, and never asks again', async () => {
+    const file = path.join(dir, 'captions.jsonl')
+    let now = 1_000_000
+    // 12 groups in a row of deleted images: as failures they'd stop the run.
+    const deleted = Array.from({ length: 24 }, (_, i) => `deleted-${i}`)
+    const urls = [...deleted, 'u1', 'u2']
+    const asked: string[] = []
+    const checked: string[] = []
+    const options = {
+      file,
+      groupSize: 2,
+      concurrency: 1,
+      batchCaptioner: async (group: string[]) => {
+        asked.push(...group)
+        if (group.some((u) => u.startsWith('deleted')))
+          throw new Error('400 Bad Request')
+        return group.map((u) => `batch ${u}`)
+      },
+      captioner: async (url: string) => {
+        asked.push(url)
+        if (url.startsWith('deleted')) throw new Error('400 Bad Request')
+        return `single ${url}`
+      },
+      gone: async (url: string) => {
+        checked.push(url)
+        return url.startsWith('deleted')
+      },
+      now: () => now,
+      log: () => {}
+    }
+    const first = await captionImages(urls, options)
+    expect(first).toMatchObject({ requested: 26, failed: 0, missing: 24 })
+    expect(first.error).toBeUndefined()
+    expect(first.warning).toBeUndefined()
+    expect(first.captions.get('u1')).toBe('batch u1')
+    // Only failed requests are checked.
+    expect(checked.sort()).toEqual([...deleted].sort())
+
+    // Gone for good: not planned or requested again, even long after.
+    now += 30 * 24 * 3600_000
+    expect(planCaptions(urls, { file, now: () => now }).todo).toEqual([])
+    asked.length = 0
+    expect((await captionImages(urls, options)).requested).toBe(0)
+    expect(asked).toEqual([])
   })
 
   it('stops on account-level errors but keeps finished captions', async () => {
