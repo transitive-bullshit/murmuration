@@ -17,5 +17,7 @@ export interface EmbedderSpec {
   /** model id; part of every cache key */
   model: string
   dim: number
+  /** requests cost money: they're planned, capped and need the build lock */
+  paid?: boolean
   load(): Promise<Embedder>
 }

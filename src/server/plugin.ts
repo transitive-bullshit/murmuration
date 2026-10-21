@@ -30,7 +30,8 @@ type Next = (err?: unknown) => void
 /**
  * Dev: serves the local analytics API from the Vite dev server, backed by
  * data/dataset.json when it exists (`pnpm export`), else by a live build from
- * your Birdclaw archive:
+ * your Birdclaw archive (paying for OpenAI work only under the spend caps;
+ * see paid.ts):
  *
  *   GET  /api/status   build progress + whether the archive changed since
  *   GET  /api/dataset  gzipped dataset JSON
@@ -103,7 +104,7 @@ export function murmurationData(): Plugin {
       }
       if (url.pathname === '/api/rebuild' && req.method === 'POST') {
         if (exported) snapshot.rebuild()
-        else void store.ensure(true)
+        else void store.ensure({ force: true })
         return json(res, exported ? snapshot.status() : store.status())
       }
       res.statusCode = 404
@@ -151,6 +152,13 @@ export function murmurationData(): Plugin {
       // by the time the browser asks for it.
       if (!snapshot?.available()) void store?.ensure()
       server.middlewares.use((req, res, next) => void handler(req, res, next))
+    },
+    // Vite restarts the dev server when a config dependency changes, which
+    // is every file in src/server/. The new server starts its own build
+    // (it waits for the build lock), so stop this one's, paid requests
+    // included. Also runs when the server closes.
+    closeServer() {
+      store?.abort()
     },
     transformIndexHtml(html) {
       if (!published) return

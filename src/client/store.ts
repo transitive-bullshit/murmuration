@@ -1,41 +1,9 @@
 import { create } from 'zustand'
 
 import type { Model } from './data/model'
+import { viewFromPath, type ViewId } from './views'
 
-export const VIEWS = [
-  {
-    id: 'constellation',
-    label: 'Constellation',
-    hint: 'Every tweet and like, arranged by meaning'
-  },
-  {
-    id: 'strata',
-    label: 'Strata',
-    hint: 'Your timeline, stacked month by month'
-  },
-  {
-    id: 'growth',
-    label: 'Growth',
-    hint: 'Followers and engagement over time, with inflection points'
-  },
-  {
-    id: 'bangers',
-    label: 'Bangers',
-    hint: 'Your biggest hits and outliers over time'
-  },
-  {
-    id: 'anatomy',
-    label: 'Anatomy',
-    hint: 'Which kinds of tweets perform best, and how that changed'
-  },
-  {
-    id: 'orbit',
-    label: 'Orbit',
-    hint: 'Followers, following, and your closest relationships'
-  }
-] as const
-
-export type ViewId = (typeof VIEWS)[number]['id']
+export { VIEWS, viewFromPath, type ViewId } from './views'
 
 export type BangerMode = 'engagement' | 'outlier'
 
@@ -95,29 +63,23 @@ const readPref = <T>(key: string, fallback: T): T => {
     return fallback
   }
 }
-/** The view a URL path names (/strata, /orbit, …), if any. */
-export function viewFromPath(pathname: string, base = '/'): ViewId | undefined {
-  const rest = pathname.startsWith(base)
-    ? pathname.slice(base.length)
-    : pathname.replace(/^\//, '')
-  const segment = rest.replace(/\/+$/, '')
-  return VIEWS.find((v) => v.id === segment)?.id
-}
-
 const writePref = (key: string, value: unknown) => {
   try {
     localStorage.setItem(`murmuration:${key}`, JSON.stringify(value))
   } catch {}
 }
 
+// A view's own URL wins over the one remembered from last time, and becomes
+// the remembered one, so a later visit to / comes back to it.
+const urlView =
+  typeof location === 'undefined'
+    ? undefined
+    : viewFromPath(location.pathname, import.meta.env.BASE_URL)
+if (urlView) writePref('view', urlView)
+
 export const useApp = create<AppState>((set) => ({
   model: undefined,
-  // A view's own URL wins over the one remembered from last time.
-  view:
-    (typeof location === 'undefined'
-      ? undefined
-      : viewFromPath(location.pathname, import.meta.env.BASE_URL)) ??
-    readPref<ViewId>('view', 'constellation'),
+  view: urlView ?? readPref<ViewId>('view', 'constellation'),
   query: '',
   kinds: [true, true, true],
   range: undefined,

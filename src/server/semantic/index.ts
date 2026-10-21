@@ -36,6 +36,8 @@ export interface SemanticOptions {
   /** advanced; the defaults are calibrated on a ~50k tweet archive */
   tuning?: Partial<Tuning>
   onProgress?: (phase: string, fraction: number) => void
+  /** cancels the run at its next scheduling pause */
+  signal?: AbortSignal
 }
 
 export interface Tuning {
@@ -100,7 +102,7 @@ export async function buildSemanticMap(
   const seed = options.seed ?? 42
   const tuning = { ...DEFAULT_TUNING, ...options.tuning }
   const report = options.onProgress ?? (() => {})
-  const clock = createClock(20)
+  const clock = createClock(20, options.signal)
   const timings: Record<string, number> = {}
   const n = texts.length
   const started = performance.now()

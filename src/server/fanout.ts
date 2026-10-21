@@ -12,6 +12,8 @@ import pMap from 'p-map'
  *   the `AbortSignal` handed to `run`.
  * - When failures stay under those limits but reach `warnRate` of all items
  *   (or more than `warnCount`), the result carries a user-facing `warning`.
+ * - Once `paused()` returns true, no new item starts; in-flight ones finish,
+ *   and the rest are counted in `paused` (results `undefined`, not failures).
  *
  * Retrying transient errors (429, 5xx) belongs inside `run`, e.g. ky's retry.
  *
@@ -41,6 +43,8 @@ export interface FanoutOptions<T> {
   warnCount?: number
   /** external cancellation */
   signal?: AbortSignal
+  /** checked before each item starts (e.g. a pause file exists) */
+  paused?: () => boolean
   /** short name of an item for log lines */
   describe?: (item: T) => string
   /** called once per failed (non-fatal) item, e.g. to record it for a later retry */
@@ -60,6 +64,8 @@ export interface FanoutResult<R> {
   /** one entry per input item, `undefined` where the item failed */
   results: Array<R | undefined>
   failed: number
+  /** items never started because `paused()` returned true */
+  paused: number
   /** user-facing summary when failures passed the soft threshold */
   warning?: string
 }
@@ -100,6 +106,7 @@ export async function fanout<T, R>(
   const results: Array<R | undefined> = Array.from({ length: total })
   let done = 0
   let failed = 0
+  let paused = 0
   let streak = 0
   const controller = new AbortController()
   const stop = (message: string, cause: unknown) => {
@@ -120,6 +127,10 @@ export async function fanout<T, R>(
     await pMap(
       items,
       async (item, index) => {
+        if (paused || options.paused?.()) {
+          paused++
+          return
+        }
         try {
           results[index] = await run(item, { index, signal: controller.signal })
           streak = 0
@@ -158,5 +169,5 @@ export async function fanout<T, R>(
     (failed >= Math.max(1, warnRate * total) || failed > warnCount)
       ? `${failed.toLocaleString()} of ${total.toLocaleString()} ${label} failed; they'll be retried on the next rebuild.`
       : undefined
-  return { results, failed, warning }
+  return { results, failed, paused, warning }
 }

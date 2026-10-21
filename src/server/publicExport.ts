@@ -170,7 +170,9 @@ const META: Allow<DatasetMeta> = {
   embedding: true,
   // Build diagnostics for you ("rebuild to finish captions"); viewers of a
   // published snapshot can't act on them. `pnpm export` prints them instead.
-  warnings: false
+  warnings: false,
+  // Only dev builds hold paid work back; the export refuses to publish one.
+  held: false
 }
 
 const DATASET: Allow<Dataset> = {

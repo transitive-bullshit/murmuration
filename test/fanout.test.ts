@@ -1,3 +1,8 @@
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+import { setTimeout as sleep } from 'node:timers/promises'
+
 import { describe, expect, it } from 'vitest'
 
 import { FanoutAbortedError, fanout } from '../src/server/fanout'
@@ -116,5 +121,57 @@ describe('fanout error budget', () => {
     // In-flight work keeps running briefly but sees the aborted signal.
     await new Promise((resolve) => setTimeout(resolve, 20))
     expect(sawAbort).toBe(true)
+  })
+
+  it('stops promptly when cancelled: in-flight requests abort, none start', async () => {
+    const controller = new AbortController()
+    let started = 0
+    const t0 = performance.now()
+    const run = fanout(
+      items(1000),
+      async (_, { signal }) => {
+        started++
+        // A slow paid request that honors its signal, like ky's.
+        await sleep(10_000, undefined, { signal })
+      },
+      { label: 'captions', concurrency: 8, signal: controller.signal }
+    )
+    setTimeout(() => controller.abort(), 20)
+    await expect(run).rejects.toThrow(/captions: cancelled/)
+    expect(performance.now() - t0).toBeLessThan(1000)
+    expect(started).toBe(8)
+  })
+
+  it('starts nothing new once the pause file appears; in-flight work finishes', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'murmuration-pause-'))
+    const pause = path.join(dir, 'PAUSE')
+    try {
+      let finished = 0
+      const failedItems: number[] = []
+      const { results, failed, paused } = await fanout(
+        items(100),
+        async (i) => {
+          if (i === 9) writeFileSync(pause, '')
+          await sleep(5)
+          finished++
+          return i
+        },
+        {
+          label: 'captions',
+          concurrency: 4,
+          paused: () => existsSync(pause),
+          onFailure: (i) => failedItems.push(i)
+        }
+      )
+      // Items 0-9 had started; 10-99 never did, and none counts as failed.
+      expect(finished).toBe(10)
+      expect(results.slice(0, 10)).toEqual(items(10))
+      expect(results.slice(10).every((r) => r === undefined)).toBe(true)
+      expect(paused).toBe(90)
+      expect(failed).toBe(0)
+      expect(failedItems).toEqual([])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

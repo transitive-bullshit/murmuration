@@ -53,6 +53,7 @@ export function openaiEmbedder(options: OpenAIOptions): EmbedderSpec {
     provider: 'openai',
     model: `${EMBEDDING_MODEL}@${EMBEDDING_DIMS}`,
     dim: EMBEDDING_DIMS,
+    paid: true,
     load: async (): Promise<Embedder> => {
       const client = openaiClient(options)
       return {

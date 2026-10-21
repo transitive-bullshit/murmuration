@@ -7,10 +7,11 @@ import { z } from 'zod'
 import { errorText, fanout, type FanoutProgress } from '../fanout'
 
 // Image captions, cached per media URL in an append-only JSONL file so an
-// interrupted run resumes where it stopped. Images are captioned several per
-// request; if a group fails, its images are retried one per request so one
-// bad image can't sink its neighbors. Failed images are recorded and retried
-// on later runs after a growing cooldown, not on every rebuild.
+// interrupted (cancelled, paused) run resumes where it stopped. Images are
+// captioned several per request; if a group fails, its images are retried
+// one per request so one bad image can't sink its neighbors. Failed images
+// are recorded and retried on later runs after a growing cooldown, not on
+// every rebuild.
 
 export type Captioner = (url: string, signal?: AbortSignal) => Promise<string>
 export type BatchCaptioner = (
@@ -29,6 +30,12 @@ export interface CaptionOptions {
   classify?: (err: unknown) => 'fatal' | 'item'
   concurrency?: number
   now?: () => number
+  /** request nothing and return what's cached (the build held paid work back) */
+  cachedOnly?: boolean
+  /** checked before each request; once true, no new request starts */
+  paused?: () => boolean
+  /** cancels the run: in-flight requests are aborted, finished captions kept */
+  signal?: AbortSignal
   onProgress?: (progress: FanoutProgress) => void
   log?: (line: string) => void
 }
@@ -39,6 +46,8 @@ export interface CaptionResult {
   /** images requested in this run */
   requested: number
   failed: number
+  /** images left unrequested because `paused()` turned true */
+  paused: number
   /** user-facing note when many images failed */
   warning?: string
   /** set when the run stopped early (bad key, service unreachable) */
@@ -84,6 +93,40 @@ function due(line: Line | undefined, now: number): boolean {
   )
 }
 
+const uniqueUrls = (urls: readonly string[]) => [
+  ...new Set(urls.filter(Boolean))
+]
+
+function cachedCaptions(
+  latest: Map<string, Line>,
+  urls: readonly string[]
+): Map<string, string> {
+  const captions = new Map<string, string>()
+  for (const url of urls) {
+    const caption = latest.get(url)?.caption
+    if (caption) captions.set(url, caption)
+  }
+  return captions
+}
+
+/**
+ * What `captionImages` would request for `urls` (uncached images, and failed
+ * ones whose cooldown is over), plus the captions already cached. Reads the
+ * cache only.
+ */
+export function planCaptions(
+  urls: readonly string[],
+  options: { file: string; now?: () => number }
+): { todo: string[]; captions: Map<string, string> } {
+  const { latest } = readLines(options.file)
+  const now = (options.now ?? Date.now)()
+  const unique = uniqueUrls(urls)
+  return {
+    todo: unique.filter((url) => due(latest.get(url), now)),
+    captions: cachedCaptions(latest, unique)
+  }
+}
+
 export async function captionImages(
   urls: readonly string[],
   options: CaptionOptions
@@ -92,18 +135,22 @@ export async function captionImages(
   const classify = options.classify ?? (() => 'item')
   const log = options.log ?? ((line: string) => console.warn(line))
   const { latest, lines } = readLines(options.file)
-  await mkdir(path.dirname(options.file), { recursive: true })
-  if (lines > latest.size * 1.5 + 100) {
-    const tmp = `${options.file}.${process.pid}.tmp`
-    await writeFile(
-      tmp,
-      [...latest.values()].map((l) => `${JSON.stringify(l)}\n`).join('')
-    )
-    await rename(tmp, options.file)
+  const unique = uniqueUrls(urls)
+  const todo = options.cachedOnly
+    ? []
+    : unique.filter((url) => due(latest.get(url), now()))
+  if (!options.cachedOnly) {
+    await mkdir(path.dirname(options.file), { recursive: true })
+    if (lines > latest.size * 1.5 + 100) {
+      const tmp = `${options.file}.${process.pid}.tmp`
+      await writeFile(
+        tmp,
+        [...latest.values()].map((l) => `${JSON.stringify(l)}\n`).join('')
+      )
+      await rename(tmp, options.file)
+    }
   }
 
-  const unique = [...new Set(urls.filter(Boolean))]
-  const todo = unique.filter((url) => due(latest.get(url), now()))
   let writes = Promise.resolve()
   const record = (line: Line) => {
     latest.set(line.url, line)
@@ -146,8 +193,9 @@ export async function captionImages(
     groups.push(todo.slice(i, i + size))
 
   let error: unknown
+  let paused = 0
   try {
-    await fanout(
+    const run = await fanout(
       groups,
       async (group, { signal }) => {
         let ok = 0
@@ -179,6 +227,8 @@ export async function captionImages(
         label: 'image caption groups',
         concurrency: options.concurrency ?? 16,
         classify: (err) => (fatal(err) ? 'fatal' : 'item'),
+        signal: options.signal,
+        paused: options.paused,
         // Individual images were already logged above.
         log: () => {},
         onProgress: () =>
@@ -189,25 +239,22 @@ export async function captionImages(
           })
       }
     )
+    if (run.paused) paused = todo.length - imagesDone
   } catch (err) {
     error = err
   }
   await writes
 
-  const captions = new Map<string, string>()
-  for (const url of unique) {
-    const caption = latest.get(url)?.caption
-    if (caption) captions.set(url, caption)
-  }
   const warning =
     imagesFailed > 20 ||
     (imagesFailed > 0 && imagesFailed >= 0.02 * todo.length)
       ? `${imagesFailed.toLocaleString()} of ${todo.length.toLocaleString()} images couldn't be described; they'll be retried on a later rebuild.`
       : undefined
   return {
-    captions,
+    captions: cachedCaptions(latest, unique),
     requested: todo.length,
     failed: imagesFailed,
+    paused,
     warning,
     error
   }

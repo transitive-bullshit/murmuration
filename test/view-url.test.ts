@@ -3,7 +3,7 @@ import path from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
-import { VIEWS, viewFromPath } from '../src/client/store'
+import { VIEWS, viewFromPath } from '../src/client/views'
 
 describe('view URLs', () => {
   it('reads the view from the path', () => {

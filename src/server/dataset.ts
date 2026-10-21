@@ -9,17 +9,7 @@ import {
   type TweetColumns
 } from '../shared/types'
 import { openReadOnly, resolveDbPath, fingerprintDb } from './db'
-import type { FanoutProgress } from './fanout'
-import {
-  captionTweetImages,
-  embedTexts,
-  embeddingInput,
-  localEmbedder,
-  openaiEmbedder,
-  truncateVectors,
-  type EmbedderSpec,
-  type Embeddings
-} from './embed'
+import { truncateVectors } from './embed'
 import {
   buildWeeklySeries,
   detectInflections,
@@ -28,12 +18,33 @@ import {
 } from './engagement'
 import { tweetFeatures, type TweetFeatures } from './features'
 import { reconstructFollowTimes } from './followers'
-import { loadArchive, type RawTweet } from './load'
+import { loadArchive, type RawArchive, type RawTweet } from './load'
+import { type BuildLock, waitingPhase, withBuildLock } from './lock'
+import {
+  captionAndEmbed,
+  defaultProviders,
+  planPaidWork,
+  type PaidInput,
+  type SpendPlan,
+  type SpendPolicy
+} from './paid'
 import { buildPeople, type PersonInteraction } from './people'
 import { buildSemanticMap, captionTerms } from './semantic'
 import { LegacyUserIdClock } from './time'
 
 export type ProgressFn = (phase: string, fraction: number) => void
+
+export interface BuildOptions {
+  onProgress?: ProgressFn
+  /** cancels the build: in-flight requests are aborted, and it rejects with the signal's reason */
+  signal?: AbortSignal
+  /** what to do with paid work over the spend caps or while paused; default 'capped' (see paid.ts) */
+  spend?: SpendPolicy
+  /** captions, vectors and the build lock live here; default `<cwd>/.cache` */
+  cacheDir?: string
+  /** the build lock of `cacheDir`, when the caller holds it already; otherwise the build takes it for its paid steps */
+  lock?: BuildLock
+}
 
 const PLACEHOLDER =
   /^(You’re unable to view this Post|This Post is from a suspended account|This Post (was deleted|is unavailable))/
@@ -47,9 +58,58 @@ const round = (v: number, digits: number) => {
   return Math.round(v * f) / f
 }
 
+const defaultCacheDir = () => path.join(process.cwd(), '.cache')
+
+function readArchive(dbPath: string): RawArchive {
+  const db = openReadOnly(dbPath)
+  try {
+    return loadArchive(db)
+  } finally {
+    db.close()
+  }
+}
+
+/** Your tweets, likes and bookmarks, oldest first: the dataset's tweet order. */
+const allTweets = (archive: RawArchive): RawTweet[] =>
+  [...archive.mine, ...archive.likes, ...archive.bookmarks].sort(
+    (a, b) => a.t - b.t
+  )
+
+const paidInput = (all: RawTweet[]): PaidInput => ({
+  ids: all.map((t) => t.id),
+  // X's placeholders for suspended or protected accounts carry no meaning.
+  texts: all.map((t) => (PLACEHOLDER.test(t.text) ? '' : t.text)),
+  media: all.map((t) => t.mediaUrls ?? (t.mediaUrl ? [t.mediaUrl] : []))
+})
+
+/**
+ * What a build would request from paid APIs now, and from which provider:
+ * reads the archive (read-only) and the caches, requests nothing.
+ */
+export async function planDataset(
+  options: { cacheDir?: string } = {}
+): Promise<SpendPlan> {
+  const cacheDir = options.cacheDir ?? defaultCacheDir()
+  const all = allTweets(readArchive(resolveDbPath()))
+  return planPaidWork(paidInput(all), {
+    cacheDir,
+    providers: defaultProviders(
+      cacheDir,
+      process.env.OPENAI_API_KEY || undefined
+    )
+  })
+}
+
 export async function buildDataset(
-  onProgress: ProgressFn = () => {}
+  options: BuildOptions = {}
 ): Promise<Dataset> {
+  const { signal } = options
+  // Progress reports between and within analytics steps double as
+  // cancellation points.
+  const onProgress: ProgressFn = (phase, fraction) => {
+    signal?.throwIfAborted()
+    options.onProgress?.(phase, fraction)
+  }
   const timings: Record<string, number> = {}
   const time = async <T>(
     label: string,
@@ -64,14 +124,7 @@ export async function buildDataset(
   const dbPath = resolveDbPath()
   const fingerprint = fingerprintDb(dbPath)
   onProgress('Reading your Birdclaw archive', 0)
-  const archive = await time('load', () => {
-    const db = openReadOnly(dbPath)
-    try {
-      return loadArchive(db)
-    } finally {
-      db.close()
-    }
-  })
+  const archive = await time('load', () => readArchive(dbPath))
   const { account } = archive
   onProgress('Reading your Birdclaw archive', 1)
 
@@ -81,26 +134,36 @@ export async function buildDataset(
     if (t.replyToId && t.replyToProfileId === account.profileId)
       selfThreadParents.add(t.replyToId)
   }
-  const all: RawTweet[] = [
-    ...archive.mine,
-    ...archive.likes,
-    ...archive.bookmarks
-  ].sort((a, b) => a.t - b.t)
+  const all = allTweets(archive)
   const features: TweetFeatures[] = all.map((t) =>
     tweetFeatures(t, { selfProfileId: account.profileId, selfThreadParents })
   )
 
   // Image captions & embeddings ---------------------------------------------
-  // X's placeholders for suspended or protected accounts carry no meaning.
-  const texts = all.map((t) => (PLACEHOLDER.test(t.text) ? '' : t.text))
-  const cacheDir = path.join(process.cwd(), '.cache')
+  // The only paid steps (with OPENAI_API_KEY): planned against the spend
+  // caps and done under the build lock, so concurrent builds never pay twice.
+  const input = paidInput(all)
+  const { texts } = input
+  const cacheDir = options.cacheDir ?? defaultCacheDir()
   const apiKey = process.env.OPENAI_API_KEY || undefined
-  const warnings: string[] = []
-  const step = { cacheDir, apiKey, onProgress, warnings }
-  const captions = await time('captions', () => describeImages(all, step))
-  const embedding = await time('embed', () =>
-    embedTweets(all, texts, captions, step)
-  )
+  const paidSteps = (lock: BuildLock) =>
+    captionAndEmbed(input, {
+      cacheDir,
+      providers: defaultProviders(cacheDir, apiKey),
+      lock,
+      spend: options.spend,
+      signal,
+      onProgress: options.onProgress,
+      secret: apiKey
+    })
+  const paid = await (options.lock
+    ? paidSteps(options.lock)
+    : withBuildLock(cacheDir, paidSteps, {
+        signal,
+        onWait: (pid) => onProgress(waitingPhase(pid), 0)
+      }))
+  Object.assign(timings, paid.timings)
+  const { captions, embedding, warnings } = paid
 
   // Follower history ---------------------------------------------------------
   onProgress('Reconstructing follower history', 0)
@@ -191,7 +254,8 @@ export async function buildDataset(
               : embedding.dim
         }),
         onProgress: (phase, fraction) =>
-          onProgress(semanticPhaseLabel(phase), fraction)
+          onProgress(semanticPhaseLabel(phase), fraction),
+        signal
       }
     )
   )
@@ -373,7 +437,8 @@ export async function buildDataset(
             missing: 0,
             imputed: 0
           },
-      warnings
+      warnings,
+      ...(paid.held && { held: paid.held })
     },
     tweets,
     clusters: semantic.clusters,
@@ -392,126 +457,6 @@ export async function buildDataset(
       }))
     }
   }
-}
-
-const errorMessage = (err: unknown, secret?: string) => {
-  const message = err instanceof Error ? err.message : String(err)
-  return secret ? message.replaceAll(secret, '***') : message
-}
-
-/** "Embedding tweets (1,200 of 44,739 · 3 skipped)" */
-const countPhase = (phase: string, { done, failed, total }: FanoutProgress) =>
-  `${phase} (${done.toLocaleString()} of ${total.toLocaleString()}${failed ? ` · ${failed.toLocaleString()} skipped` : ''})`
-
-interface StepOptions {
-  cacheDir: string
-  apiKey?: string
-  onProgress: ProgressFn
-  /** user-facing notes collected into meta.warnings */
-  warnings: string[]
-}
-
-/** Captions for each tweet's first images (OpenAI only), cached per media URL. */
-async function describeImages(
-  all: RawTweet[],
-  options: StepOptions
-): Promise<string[][]> {
-  const none = all.map(() => [])
-  if (!options.apiKey) return none
-  const media = all.map((t) => t.mediaUrls ?? (t.mediaUrl ? [t.mediaUrl] : []))
-  const log = (line: string) =>
-    console.warn(line.replaceAll(options.apiKey!, '***'))
-  options.onProgress('Describing images', 0)
-  try {
-    const result = await captionTweetImages(media, {
-      cacheDir: options.cacheDir,
-      apiKey: options.apiKey,
-      log,
-      onProgress: (p) =>
-        options.onProgress(
-          countPhase('Describing images', p),
-          p.done / Math.max(1, p.total)
-        )
-    })
-    if (result.warning) options.warnings.push(result.warning)
-    if (result.error) {
-      log(
-        `[murmuration] image captions stopped early: ${errorMessage(result.error, options.apiKey)}`
-      )
-      options.warnings.push(
-        'Describing images stopped early; the rest will be described on the next rebuild.'
-      )
-    }
-    return result.captions
-  } catch (err) {
-    log(
-      `[murmuration] image captions unavailable: ${errorMessage(err, options.apiKey)}`
-    )
-    options.warnings.push(
-      'Images could not be described this time; topics use tweet text only.'
-    )
-    return none
-  } finally {
-    options.onProgress('Describing images', 1)
-  }
-}
-
-/**
- * Embeds tweet text plus image captions with the best available provider:
- * OpenAI (when a key is set), then local transformers.js. Returns undefined
- * when neither works, so the semantic map falls back to bag-of-words LSA.
- */
-async function embedTweets(
-  all: RawTweet[],
-  texts: string[],
-  captions: string[][],
-  options: StepOptions
-): Promise<Embeddings | undefined> {
-  const inputs: string[] = []
-  for (const [i, text] of texts.entries()) {
-    inputs.push(embeddingInput(text, captions[i]))
-    // Regex-heavy cleanup: let the dev server breathe.
-    if (i % 2000 === 1999) await new Promise((resolve) => setImmediate(resolve))
-  }
-  const providers: EmbedderSpec[] = [
-    ...(options.apiKey ? [openaiEmbedder({ apiKey: options.apiKey })] : []),
-    localEmbedder(options.cacheDir)
-  ]
-  const log = (line: string) =>
-    console.warn(options.apiKey ? line.replaceAll(options.apiKey, '***') : line)
-  for (const embedder of providers) {
-    options.onProgress('Embedding tweets', 0)
-    try {
-      const result = await embedTexts(
-        all.map((t) => t.id),
-        inputs,
-        {
-          cacheDir: options.cacheDir,
-          embedder,
-          log,
-          onProgress: (p) =>
-            options.onProgress(
-              countPhase('Embedding tweets', p),
-              p.done / Math.max(1, p.total)
-            )
-        }
-      )
-      if (result.warning) options.warnings.push(result.warning)
-      return result
-    } catch (err) {
-      log(
-        `[murmuration] ${embedder.provider} embeddings failed, trying the next option: ${errorMessage(err, options.apiKey)}`
-      )
-      options.warnings.push(
-        embedder.provider === 'openai'
-          ? 'OpenAI embeddings failed this time; topics use the local model instead.'
-          : 'Local embeddings failed; topics fall back to word statistics.'
-      )
-    } finally {
-      options.onProgress('Embedding tweets', 1)
-    }
-  }
-  return undefined
 }
 
 function semanticPhaseLabel(phase: string): string {

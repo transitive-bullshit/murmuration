@@ -21,6 +21,7 @@ import {
   type DatasetStore
 } from './cache'
 import { fingerprintDb, openReadOnly, resolveDbPath } from './db'
+import { SpendHeldError, type SpendPolicy } from './paid'
 import {
   DmFingerprints,
   EXPORT_FORMAT,
@@ -33,7 +34,11 @@ import {
 
 /** Where `pnpm export` writes the snapshot, relative to the project root. */
 export const EXPORT_FILE = 'data/dataset.json'
-export const exportPath = (root: string) => path.join(root, EXPORT_FILE)
+/** The export to publish: data/dataset.json, or MURMURATION_EXPORT (tests, fixtures). */
+export const exportPath = (root: string) =>
+  process.env.MURMURATION_EXPORT
+    ? path.resolve(root, process.env.MURMURATION_EXPORT)
+    : path.join(root, EXPORT_FILE)
 
 export interface ExportOptions {
   root: string
@@ -42,6 +47,11 @@ export interface ExportOptions {
   force?: boolean
   /** publish even if the preferred embedder failed and a fallback ran */
   allowFallback?: boolean
+  /**
+   * 'strict' (default) stops before paying for more than the spend caps;
+   * 'approved' (`--yes`) pays for it. Paused paid work stops either.
+   */
+  spend?: Exclude<SpendPolicy, 'capped'>
   onProgress?: (phase: string, fraction: number) => void
 }
 
@@ -61,7 +71,8 @@ export interface ExportResult {
  * The export pipeline:
  *
  *   1. read the archive, caption images, embed every tweet, run the analytics
- *      (`buildDataset`; captions and vectors are cached per tweet in .cache/)
+ *      (`buildDataset`; captions and vectors are cached per tweet in .cache/,
+ *      and paid requests over the spend caps need `spend: 'approved'`)
  *   2. insist on the embedder you configured (OpenAI with OPENAI_API_KEY,
  *      else the local model) rather than silently publishing a fallback
  *   3. copy only allowlisted fields (`toPublicDataset`)
@@ -73,7 +84,10 @@ export async function runExport(options: ExportOptions): Promise<ExportResult> {
   const report = options.onProgress ?? (() => {})
   const unwatch = store.watch((p) => !p.done && report(p.phase, p.fraction))
   try {
-    await store.ensure(options.force)
+    await store.ensure({
+      force: options.force,
+      spend: options.spend ?? 'strict'
+    })
   } finally {
     unwatch()
   }
@@ -84,6 +98,11 @@ export async function runExport(options: ExportOptions): Promise<ExportResult> {
   const dataset = JSON.parse(
     gunzipSync(await store.get()).toString('utf8')
   ) as Dataset
+  // E.g. a capped dev build was already running when the export started.
+  if (dataset.meta.held)
+    throw new Error(
+      'The build left paid work for later, so it is incomplete; re-run the export'
+    )
 
   const want = preferredEmbedder()
   const got = dataset.meta.embedding.provider
@@ -340,7 +359,10 @@ export class ExportStore {
           done: true,
           error: message
         }
-        console.error('[murmuration] export failed:', err)
+        console.error(
+          '[murmuration] export failed:',
+          err instanceof SpendHeldError ? err.message : err
+        )
       })
       .finally(() => {
         this.running = undefined

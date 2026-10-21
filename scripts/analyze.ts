@@ -3,6 +3,7 @@
 //
 //   pnpm analyze            # build if the archive changed
 //   pnpm analyze --force    # always rebuild
+//   pnpm analyze --yes      # pay for OpenAI work above the spend caps (see `pnpm export --plan`)
 
 import path from 'node:path'
 import { gunzipSync } from 'node:zlib'
@@ -14,6 +15,7 @@ import { loadLocalEnv } from '../src/server/env'
 loadLocalEnv(path.resolve(import.meta.dirname, '..'))
 
 const force = process.argv.includes('--force')
+const spend = process.argv.includes('--yes') ? 'approved' : 'strict'
 const store = new DatasetStore(
   path.resolve(import.meta.dirname, '..', '.cache')
 )
@@ -28,7 +30,7 @@ const timer = setInterval(() => {
   }
 }, 100)
 
-await store.ensure(force)
+await store.ensure({ force, spend })
 clearInterval(timer)
 process.stdout.write('\r\x1b[2K')
 

@@ -72,33 +72,35 @@ export class VectorCache {
     clock?: Clock
   ): Promise<VectorCache> {
     const cache = new VectorCache(file, dim)
-    if (!existsSync(file)) return cache
-    try {
-      const buf = await readFile(file)
-      if (
-        buf.length < HEADER ||
-        buf.readUInt32LE(0) !== MAGIC ||
-        buf.readUInt32LE(4) !== VERSION ||
-        buf.readUInt32LE(8) !== dim
+    // Unreadable means empty; a cancelled clock still throws.
+    const buf = await read(file, dim).catch(() => undefined)
+    if (!buf) return cache
+    const size = KEY_BYTES + dim
+    const bytes = new Int8Array(buf.buffer, buf.byteOffset, buf.length)
+    const count = recordCount(buf, dim)
+    for (let r = 0; r < count; r++) {
+      const off = HEADER + r * size
+      cache.entries.set(
+        buf.toString('hex', off, off + KEY_BYTES),
+        bytes.slice(off + KEY_BYTES, off + size)
       )
-        return cache
-      const size = KEY_BYTES + dim
-      const bytes = new Int8Array(buf.buffer, buf.byteOffset, buf.length)
-      // A torn final record (interrupted append) is ignored.
-      const count = Math.floor((buf.length - HEADER) / size)
-      for (let r = 0; r < count; r++) {
-        const off = HEADER + r * size
-        cache.entries.set(
-          buf.toString('hex', off, off + KEY_BYTES),
-          bytes.slice(off + KEY_BYTES, off + size)
-        )
-        if ((r & 1023) === 0 && clock?.due()) await clock.pause()
-      }
-      cache.records = count
-    } catch {
-      cache.entries.clear()
+      if ((r & 1023) === 0 && clock?.due()) await clock.pause()
     }
+    cache.records = count
     return cache
+  }
+
+  /** The keys `open` would load, without decoding vectors (for planning). */
+  static async keys(file: string, dim: number): Promise<Set<string>> {
+    const keys = new Set<string>()
+    const buf = await read(file, dim).catch(() => undefined)
+    if (!buf) return keys
+    const size = KEY_BYTES + dim
+    for (let r = 0, count = recordCount(buf, dim); r < count; r++)
+      keys.add(
+        buf.toString('hex', HEADER + r * size, HEADER + r * size + KEY_BYTES)
+      )
+    return keys
   }
 
   private encode(items: Array<[string, Int8Array]>): Buffer {
@@ -149,3 +151,19 @@ export class VectorCache {
     this.records = live.length
   }
 }
+
+/** The file's bytes, or undefined if it's missing or not a cache of `dim`-d vectors. */
+async function read(file: string, dim: number): Promise<Buffer | undefined> {
+  if (!existsSync(file)) return undefined
+  const buf = await readFile(file)
+  return buf.length >= HEADER &&
+    buf.readUInt32LE(0) === MAGIC &&
+    buf.readUInt32LE(4) === VERSION &&
+    buf.readUInt32LE(8) === dim
+    ? buf
+    : undefined
+}
+
+// A torn final record (interrupted append) is ignored.
+const recordCount = (buf: Buffer, dim: number) =>
+  Math.floor((buf.length - HEADER) / (KEY_BYTES + dim))

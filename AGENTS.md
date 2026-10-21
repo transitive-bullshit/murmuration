@@ -24,6 +24,13 @@ A local, read-only 3D observatory for one person's X/Twitter history, built on t
 - Layouts must stay pure and index-aligned with `Dataset.tweets` (or `Dataset.people`); the particle field relies on stable indices to morph.
 - Follower dates are _reconstructed_ (archive order + snowflake account-creation lower bounds), not observed. Keep UI copy honest about that and about likes being placed at the liked tweet's post time.
 
+## Paid pipeline
+
+- Editing `src/server/**` restarts `pnpm dev`, which cancels its build and starts a new one.
+- OpenAI captions and embeddings are capped per build: `pnpm export --plan` shows the work, `pnpm export --yes` pays past the cap.
+- Stop paid work with `touch .cache/PAUSE` (delete it to resume), never by killing `pnpm dev`.
+- Builds take turns via the lock at `.cache/build.lock`.
+
 ## Not in git
 
 - `.cache/` (private, derived from the user's archive), `data/` (the export; deployed, not committed), and `dist/`.
@@ -32,4 +39,4 @@ A local, read-only 3D observatory for one person's X/Twitter history, built on t
 
 ## Checks
 
-`pnpm test` (format, oxlint incl. anti-slop rules, `tsc`, vitest on synthetic data — offline, no archive needed) and `pnpm build` (needs `data/dataset.json` from `pnpm export`). Visual changes need a look in the browser: `pnpm dev`, then `?nofx` disables post-processing when debugging rendering.
+`pnpm test` (format, oxlint incl. anti-slop rules, `tsc`, vitest on synthetic data including a production build; offline) also runs before every push. Visual changes: `pnpm smoke` opens every view headlessly and fails on errors or a blank canvas; to prove a feature, follow `.agents/skills/verify-murmuration/`. Shaders render through half-float MSAA targets, so clamp `pow`/`log`/`sqrt` inputs: one NaN blacks out the whole frame (bisect with `?nofx`).

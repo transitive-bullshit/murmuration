@@ -11,21 +11,28 @@ pnpm export            # optional: build data/dataset.json once (see below)
 pnpm dev               # https://murmuration.localhost via Portless
 ```
 
-The dev server serves `data/dataset.json` when it exists. Otherwise it builds from your archive on first load (the page shows progress) and caches the result in `.cache/` until the database changes. Either way, the UI offers a refresh when Birdclaw writes to the archive; with an export, the refresh re-runs the export.
+The dev server serves `data/dataset.json` when it exists. Otherwise it builds from your archive on first load (the page shows progress) and caches the result in `.cache/` until the database changes. Either way, the UI offers a refresh when Birdclaw writes to the archive; with an export, the refresh re-runs the export. With `OPENAI_API_KEY`, the dev server only pays for small batches of new captions and embeddings on its own (see [Paid requests](#paid-requests)); a first build needs `pnpm export --yes`.
 
 | Variable | Purpose |
 | --- | --- |
 | `BIRDCLAW_DB` | Path to a different Birdclaw SQLite file (defaults to `~/.birdclaw/birdclaw.sqlite`) |
 | `OPENAI_API_KEY` | Optional, in `.env`. Embeds tweets with OpenAI `text-embedding-3-large` and captions their images with `gpt-6-luna`, instead of using a local model (`bge-small-en-v1.5`) with no captions. A first build of ~50k tweets costs roughly $1; later builds only pay for new tweets and images |
+| `MURMURATION_MAX_NEW_CAPTIONS` | New image captions one build requests without `--yes` (default 200) |
+| `MURMURATION_MAX_NEW_EMBEDDINGS` | New embeddings one build requests without `--yes` (default 2,000) |
 
 Other commands:
 
 ```bash
 pnpm export           # the full pipeline → data/dataset.json (required by pnpm build)
+pnpm export --plan    # the OpenAI requests a build would make; makes none
+pnpm export --yes     # pay for them even above the caps
 pnpm export --force   # re-run the analytics even if the archive hasn't changed
-pnpm analyze          # build/refresh .cache only; prints inflections
+pnpm analyze          # build/refresh .cache only; prints inflections (also takes --yes)
+touch .cache/PAUSE    # stop paid requests now, in every build; delete it to resume
 pnpm build && pnpm preview
-pnpm test             # format, lint, types, unit tests (offline)
+pnpm test             # format, lint, types, unit tests and a production build of synthetic data (offline)
+pnpm smoke            # build, then open every view headlessly; fails on errors or a blank canvas
+pnpm shots            # build, then regenerate media/*.webp and public/og.jpg
 ```
 
 `?nofx` in the URL disables post-processing, which helps on weak GPUs and when debugging rendering.
@@ -35,7 +42,7 @@ pnpm test             # format, lint, types, unit tests (offline)
 | Step | Code | Output |
 | --- | --- | --- |
 | Read the archive (read-only) | `src/server/db.ts`, `src/server/load.ts` | raw tweets, likes, follows, profiles, DM counts |
-| Caption images, embed tweets | `src/server/embed/`, called early in `buildDataset` (`src/server/dataset.ts`) | one vector per tweet from its text plus image captions. Uses OpenAI with `OPENAI_API_KEY`, otherwise local transformers.js, otherwise LSA. Cached per tweet in `.cache/`. Requests fan out 16 at a time (`src/server/fanout.ts`): a failed item is logged, filled in from its nearest tweets, and retried on the next build; the build stops only on a bad key, 10 failures in a row, or a majority failing |
+| Caption images, embed tweets | `src/server/paid.ts` and `src/server/embed/`, called early in `buildDataset` (`src/server/dataset.ts`) | one vector per tweet from its text plus image captions. Uses OpenAI with `OPENAI_API_KEY`, otherwise local transformers.js, otherwise LSA. Cached per tweet in `.cache/`; OpenAI requests are planned and capped first (see [Paid requests](#paid-requests)). Requests fan out 16 at a time (`src/server/fanout.ts`): a failed item is logged, filled in from its nearest tweets, and retried on the next build; the build stops only on a bad key, 10 failures in a row, or a majority failing |
 | Classify tweets | `src/server/features.ts` | format (text/image/video/link/quote/thread/reply/repost) + flags |
 | Reconstruct follow dates | `src/server/followers.ts` | estimated follow time per follower |
 | Score engagement, find inflections | `src/server/engagement.ts` | per-tweet lift/outlier, weekly series, spikes, surges, causes |
@@ -45,6 +52,16 @@ pnpm test             # format, lint, types, unit tests (offline)
 | Export | `scripts/export.ts`, `src/server/exporter.ts`, `src/server/publicExport.ts` | `data/dataset.json`: allowlisted fields, audited for DM text |
 | Serve | `src/server/plugin.ts` | dev: `/api/status`, `/api/dataset`, `POST /api/rebuild`. Build: requires the export and ships it as `dist/data/dataset.<hash>.json` |
 | Views | `src/client/layouts/*`, `src/client/gl/*` | particle layouts + overlays per view |
+
+### Paid requests
+
+With `OPENAI_API_KEY`, image captions and embeddings are the only paid part of a build, and only uncached items cost anything. `src/server/paid.ts` keeps that spend explicit:
+
+- **Plan first.** Before any request, a build counts the uncached images and embedding inputs (a tweet whose image gets a new caption needs a new embedding too). `pnpm export --plan` prints that plan and exits.
+- **Caps.** A build requests at most `MURMURATION_MAX_NEW_CAPTIONS` (200) new captions and `MURMURATION_MAX_NEW_EMBEDDINGS` (2,000) new embeddings on its own: enough for a sync's worth of tweets. Over either cap, `pnpm export` and `pnpm analyze` stop before requesting anything unless you pass `--yes`. The dev server never goes over on its own: it builds from what's cached (missing captions are skipped, missing vectors are imputed from neighboring tweets, or the map uses word statistics if most are missing) and shows a notice with the count and the command to run.
+- **One build at a time.** Paid requests need the cross-process lock `.cache/build.lock` (`src/server/lock.ts`), so `pnpm dev`, `pnpm export` and any script calling `buildDataset` take turns instead of paying twice. A lock left by a dead process is reclaimed.
+- **Cancellation.** Editing anything in `src/server/` restarts the dev server (those files are config dependencies of `vite.config.ts`). The plugin's `closeServer` hook cancels the old build, in-flight requests included, and the new server starts its own. Finished captions and vectors stay cached either way.
+- **Pause.** While `.cache/PAUSE` exists, no paid request starts: in-flight ones finish, `pnpm export` stops, and the dev server builds from the cache and says it paused. Delete the file and refresh (or re-run the export) to carry on. Use it instead of killing `pnpm dev`.
 
 ### Follower history
 
@@ -65,7 +82,7 @@ Each of your tweets is compared with your rolling median for the same kind of tw
 
 ## Export and deploy
 
-`pnpm export` runs the whole pipeline with each step on its own line: read the archive, describe images, embed tweets, then the analytics. It then writes `data/dataset.json`. It refuses to publish a fallback: if `OPENAI_API_KEY` is set but OpenAI embeddings failed, or the local model failed, it stops (`--allow-fallback` overrides this).
+`pnpm export` runs the whole pipeline with each step on its own line: read the archive, describe images, embed tweets, then the analytics. It then writes `data/dataset.json`. It refuses to publish a fallback: if `OPENAI_API_KEY` is set but OpenAI embeddings failed, or the local model failed, it stops (`--allow-fallback` overrides this). It also stops before paying for more than the [caps](#paid-requests) (`--yes` pays) and while `.cache/PAUSE` exists.
 
 The export contains your tweets, likes, bookmarks, follower and following lists, image captions, and per-person DM message counts. It never contains DM text: the analytics only count DMs, and the audit reads message text locally just to hash it. It also omits the archive's path and your API key. Two layers enforce this:
 
@@ -97,11 +114,15 @@ The build also writes the site's metadata from the export (`src/server/site.ts`)
 
 - **Change analytics:** edit `src/server/*`, bump `PIPELINE_REVISION` in `src/server/cache.ts`, then run `pnpm export --force` (or `pnpm analyze --force` if you don't use an export).
 - **Add a `Dataset` field:** `src/server/publicExport.ts` won't type-check until you allowlist it there. Only do that if the field is safe to publish.
-- **Add a view:** add an id to `VIEWS` in `src/client/store.ts`, a pure layout in `src/client/layouts/`, a camera framing in `src/client/gl/CameraRig.tsx`, an overlay in `src/client/gl/overlays.tsx`, and a panel in `src/client/ui/ViewPanel.tsx`.
+- **Add a view:** add an id to `VIEWS` in `src/client/views.ts` and to the rewrite in `vercel.json`, a pure layout in `src/client/layouts/`, a camera framing in `src/client/gl/CameraRig.tsx`, an overlay in `src/client/gl/overlays.tsx`, and a panel in `src/client/ui/ViewPanel.tsx`.
 
 ## Tests and CI
 
-`test/` holds offline unit tests on synthetic data: snowflake time, follower reconstruction from shuffled blocks, spike/surge detection and attribution, format classification, closeness, and the semantic pipeline. CI (`.github/workflows/test.yml`) runs `pnpm test`; it never needs an archive. It skips `pnpm build`, because production builds need your export.
+`test/` holds offline unit tests on synthetic data: snowflake time, follower reconstruction from shuffled blocks, spike/surge detection and attribution, format classification, closeness, the semantic pipeline, the export's privacy audit, and a production build of a synthetic export (`MURMURATION_EXPORT` points the build at it). The paid pipeline is tested with fake captioners and embedders: plans and caps, the pause file, cancellation, the build lock across child processes, and a real Vite dev server restarting on a config-dependency edit. None of it needs an archive.
+
+Git hooks (installed by `pnpm install`): pre-commit formats and lints staged files; pre-push runs `pnpm test`. CI (`.github/workflows/test.yml`) runs `pnpm test` too, when GitHub Actions is available.
+
+`pnpm smoke` checks what unit tests can't: it serves `dist/`, opens all six views in headless Chromium (Playwright), and fails on console errors, failed requests, or a blank WebGL canvas, the symptom of a NaN in a shader. Screenshots land in `.cache/smoke/`. To prove a specific feature, use the verification skill in `.agents/skills/verify-murmuration/`: scripted journeys that capture screenshots, ARIA snapshots and a step log in `.cache/verify/`.
 
 ## Repo map
 

@@ -12,6 +12,8 @@
     "dev": "portless run vite --configLoader runner",
     "build": "vite build --configLoader runner",
     "preview": "vite preview --configLoader runner",
+    "smoke": "pnpm build && tsx scripts/smoke.ts",
+    "shots": "pnpm build && tsx scripts/shots.ts",
     "export": "tsx scripts/export.ts",
     "deploy:vercel": "pnpm export && pnpm build && tsx scripts/deploy.ts",
     "analyze": "tsx scripts/analyze.ts",
@@ -24,7 +26,8 @@
     "typecheck": "pnpm test:types",
     "fix": "run-s fix:*",
     "fix:format": "oxfmt",
-    "fix:lint": "oxlint --fix"
+    "fix:lint": "oxlint --fix",
+    "prepare": "simple-git-hooks"
   },
   "dependencies": {
     "@huggingface/transformers": "^4.3.1",
@@ -56,7 +59,9 @@
     "oxfmt": "^0.74.0",
     "oxlint": "^1.89.0",
     "oxlint-tsgolint": "^7.0.2004",
+    "playwright": "^1.64.1",
     "portless": "^0.15.8",
+    "sharp": "^0.35.5",
     "simple-git-hooks": "^2.14.0",
     "tailwindcss": "^4.3.3",
     "tsx": "^4.23.15",
@@ -65,12 +70,16 @@
     "vitest": "^5.0.5"
   },
   "simple-git-hooks": {
-    "pre-commit": "npx lint-staged"
+    "pre-commit": "npx lint-staged",
+    "pre-push": "pnpm test"
   },
   "lint-staged": {
     "*.{ts,tsx}": [
       "oxfmt --no-error-on-unmatched-pattern",
       "oxlint --fix"
+    ],
+    "*.{js,mjs,cjs,json,md}": [
+      "oxfmt --no-error-on-unmatched-pattern"
     ]
   },
   "engines": {

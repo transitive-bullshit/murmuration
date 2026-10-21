@@ -1,22 +1,18 @@
 import { randomUUID } from 'node:crypto'
-import {
-  linkSync,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  writeFileSync
-} from 'node:fs'
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { gzipSync } from 'node:zlib'
 
 import {
   DATASET_VERSION,
   type BuildProgress,
-  type Dataset
+  type Dataset,
+  type HeldWork
 } from '../shared/types'
 import { buildDataset } from './dataset'
 import { fingerprintDb, resolveDbPath, type DbFingerprint } from './db'
+import { waitingPhase, withBuildLock } from './lock'
+import { SpendHeldError, stillHeld, type SpendPolicy } from './paid'
 
 // Bump when analytics change in a way that should invalidate cached builds.
 export const PIPELINE_REVISION = 5
@@ -36,34 +32,58 @@ interface CacheMeta {
   embedder: string
   fingerprint: DbFingerprint
   generatedAt: string
+  /** paid work the build left for later (see paid.ts) */
+  held?: HeldWork
 }
 
 const sameFingerprint = (a: DbFingerprint, b: DbFingerprint) =>
   a.path === b.path && a.size === b.size && Math.abs(a.mtimeMs - b.mtimeMs) < 1
 
 /** Whether a build still reflects this code, configuration, and archive. */
-function isFresh(meta: CacheMeta): boolean {
+function isFresh(
+  meta: CacheMeta,
+  spend: SpendPolicy,
+  cacheDir: string
+): boolean {
   try {
-    return (
-      meta.version === DATASET_VERSION &&
-      meta.revision === PIPELINE_REVISION &&
-      meta.embedder === preferredEmbedder() &&
-      sameFingerprint(meta.fingerprint, fingerprintDb(resolveDbPath()))
+    if (
+      meta.version !== DATASET_VERSION ||
+      meta.revision !== PIPELINE_REVISION ||
+      !sameFingerprint(meta.fingerprint, fingerprintDb(resolveDbPath()))
     )
+      return false
+    // A build that left paid work for later stands in only for another
+    // capped build, and only while that work would still be held back.
+    if (meta.held)
+      return (
+        spend === 'capped' &&
+        preferredEmbedder() === 'openai' &&
+        stillHeld(meta.held, cacheDir)
+      )
+    return meta.embedder === preferredEmbedder()
   } catch {
     return false
   }
 }
 
+export interface EnsureOptions {
+  /** rebuild even if a fresh dataset exists */
+  force?: boolean
+  /** what to do with paid work over the caps or while paused; default 'capped' */
+  spend?: SpendPolicy
+}
+
 /**
  * Builds the dataset once, keeps the gzipped JSON in memory, and mirrors it
  * to `.cache/` so restarts are instant. Only derived data is written; the
- * Birdclaw database is opened read-only.
+ * Birdclaw database is opened read-only. Builds hold the build lock, so one
+ * runs at a time per cache directory, across processes; `abort()` stops one.
  */
 export class DatasetStore {
   private gz: Buffer | undefined
   private meta: CacheMeta | undefined
   private building: Promise<void> | undefined
+  private controller: AbortController | undefined
   private readonly listeners = new Set<(p: BuildProgress) => void>()
   progress: BuildProgress = { phase: 'Waiting', fraction: 0, done: false }
 
@@ -97,10 +117,13 @@ export class DatasetStore {
     let stale = false
     try {
       if (this.meta)
-        stale = !sameFingerprint(
-          this.meta.fingerprint,
-          fingerprintDb(resolveDbPath())
-        )
+        stale =
+          !sameFingerprint(
+            this.meta.fingerprint,
+            fingerprintDb(resolveDbPath())
+          ) ||
+          // e.g. .cache/PAUSE was deleted: a rebuild would carry on
+          (!!this.meta.held && !stillHeld(this.meta.held, this.cacheDir))
     } catch {}
     return {
       ...this.progress,
@@ -119,21 +142,37 @@ export class DatasetStore {
   }
 
   /** Builds unless a fresh dataset is in memory or on disk (or `force`). */
-  ensure(force = false): Promise<void> {
+  ensure({
+    force = false,
+    spend = 'capped'
+  }: EnsureOptions = {}): Promise<void> {
     if (this.building) return this.building
-    if (!force && this.gz && this.meta && isFresh(this.meta))
+    if (
+      !force &&
+      this.gz &&
+      this.meta &&
+      isFresh(this.meta, spend, this.cacheDir)
+    )
       return Promise.resolve()
-    if (!force && this.loadFromDisk()) return Promise.resolve()
-    this.building = this.build().finally(() => {
+    if (!force && this.loadFromDisk(spend)) return Promise.resolve()
+    this.building = this.build(spend).finally(() => {
       this.building = undefined
     })
     return this.building
   }
 
-  private loadFromDisk(): boolean {
+  /**
+   * Cancels the build in progress, if any: its requests are aborted, and
+   * whatever they finished stays cached for the next build.
+   */
+  abort() {
+    this.controller?.abort(new Error('The build was cancelled'))
+  }
+
+  private loadFromDisk(spend: SpendPolicy): boolean {
     try {
       const meta = JSON.parse(readFileSync(this.metaPath, 'utf8')) as CacheMeta
-      if (!isFresh(meta)) return false
+      if (!isFresh(meta, spend, this.cacheDir)) return false
       this.gz = readFileSync(this.dataPath)
       this.meta = meta
       this.setProgress({ phase: 'Ready', fraction: 1, done: true })
@@ -143,23 +182,26 @@ export class DatasetStore {
     }
   }
 
-  private async build() {
+  private async build(spend: SpendPolicy) {
+    const controller = new AbortController()
+    const { signal } = controller
+    this.controller = controller
     this.setProgress({ phase: 'Starting', fraction: 0, done: false })
     try {
       await withBuildLock(
         this.cacheDir,
-        (pid) =>
-          this.setProgress({
-            phase: `Waiting for another build to finish (pid ${pid}; if none is running, delete .cache/build.lock)`,
-            fraction: 0,
-            done: false
-          }),
-        async (waited) => {
+        async (lock, waited) => {
           // Whoever held the lock may have just built exactly this.
-          if (waited && this.loadFromDisk()) return
+          if (waited && this.loadFromDisk(spend)) return
           const fingerprint = fingerprintDb(resolveDbPath())
-          const dataset: Dataset = await buildDataset((phase, fraction) => {
-            this.setProgress({ phase, fraction, done: false })
+          const dataset: Dataset = await buildDataset({
+            cacheDir: this.cacheDir,
+            lock,
+            signal,
+            spend,
+            onProgress: (phase, fraction) => {
+              this.setProgress({ phase, fraction, done: false })
+            }
           })
           this.setProgress({ phase: 'Compressing', fraction: 1, done: false })
           const gz = gzipSync(JSON.stringify(dataset), { level: 6 })
@@ -168,7 +210,8 @@ export class DatasetStore {
             revision: PIPELINE_REVISION,
             embedder: dataset.meta.embedding.provider,
             fingerprint,
-            generatedAt: dataset.meta.generatedAt
+            generatedAt: dataset.meta.generatedAt,
+            ...(dataset.meta.held && { held: dataset.meta.held })
           }
           mkdirSync(this.cacheDir, { recursive: true })
           const tmp = `${this.dataPath}.${randomUUID()}.tmp`
@@ -177,10 +220,29 @@ export class DatasetStore {
           writeFileSync(this.metaPath, JSON.stringify(meta, null, 2))
           this.gz = gz
           this.meta = meta
+        },
+        {
+          signal,
+          onWait: (pid) =>
+            this.setProgress({
+              phase: waitingPhase(pid),
+              fraction: 0,
+              done: false
+            })
         }
       )
       this.setProgress({ phase: 'Ready', fraction: 1, done: true })
     } catch (err) {
+      if (signal.aborted) {
+        console.warn('[murmuration] dataset build cancelled')
+        this.setProgress({
+          phase: 'Cancelled',
+          fraction: 0,
+          done: true,
+          error: 'The build was cancelled'
+        })
+        return
+      }
       const message = err instanceof Error ? err.message : String(err)
       this.setProgress({
         phase: 'Failed',
@@ -188,97 +250,11 @@ export class DatasetStore {
         done: true,
         error: message
       })
-      console.error('[murmuration] dataset build failed:', err)
+      // Held paid work isn't a crash; whoever asked for the build reports it.
+      if (!(err instanceof SpendHeldError))
+        console.error('[murmuration] dataset build failed:', err)
+    } finally {
+      if (this.controller === controller) this.controller = undefined
     }
-  }
-}
-
-/**
- * One build at a time per cache directory, across processes (`pnpm export`
- * next to `pnpm dev`) and across Vite restarts within one: concurrent builds
- * would pay for the same embeddings twice and race on the vector cache.
- */
-async function withBuildLock(
-  cacheDir: string,
-  onWait: (pid: number) => void,
-  fn: (waited: boolean) => Promise<void>
-) {
-  const file = path.join(cacheDir, 'build.lock')
-  const token = `${process.pid} ${randomUUID()}`
-  mkdirSync(cacheDir, { recursive: true })
-  let waited = false
-  for (;;) {
-    const holder = tryLock(file, token)
-    if (holder === undefined) break
-    if (!waited && holder > 0) onWait(holder)
-    waited = true
-    await new Promise((r) => setTimeout(r, 1000))
-  }
-  try {
-    await fn(waited)
-  } finally {
-    // Only ever remove our own lock.
-    try {
-      if (readFileSync(file, 'utf8') === token) rmSync(file)
-    } catch {
-      // already gone
-    }
-  }
-}
-
-/**
- * Takes the lock, or returns the pid holding it (0 while it's mid-write).
- * A lock whose owner died is moved aside atomically and checked before
- * it's discarded, so a lock someone else just took is never deleted.
- */
-function tryLock(file: string, token: string): number | undefined {
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      writeFileSync(file, token, { flag: 'wx' })
-      return undefined
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err
-    }
-    const pid = lockOwner(file)
-    if (pid === undefined) return 0
-    if (isAlive(pid)) return pid
-    const aside = `${file}.${randomUUID()}`
-    try {
-      renameSync(file, aside)
-    } catch {
-      return 0 // someone else moved it first
-    }
-    if (lockOwner(aside) === pid) rmSync(aside, { force: true })
-    else {
-      // A new owner took the lock between our check and the move: put it
-      // back, unless yet another process has taken it meanwhile.
-      try {
-        linkSync(aside, file)
-      } catch {
-        // can't restore without clobbering; the next holder keeps it
-      }
-      rmSync(aside, { force: true })
-      return 0
-    }
-  }
-  return 0
-}
-
-function lockOwner(file: string): number | undefined {
-  try {
-    const pid = Number(readFileSync(file, 'utf8').split(' ')[0])
-    return pid > 0 ? pid : undefined
-  } catch {
-    return undefined
-  }
-}
-
-function isAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0)
-    return true
-  } catch (err) {
-    // EPERM: alive, but someone else's process.
-    return (err as NodeJS.ErrnoException).code === 'EPERM'
   }
 }

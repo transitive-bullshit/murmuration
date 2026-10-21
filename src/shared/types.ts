@@ -232,6 +232,17 @@ export interface DatasetMeta {
   }
   /** user-facing notes about a degraded build (e.g. some images couldn't be described) */
   warnings?: string[]
+  /** paid work this build left for later (over the spend caps, or paused) */
+  held?: HeldWork
+}
+
+/** Paid requests a build didn't make, and why; it used what was cached instead. */
+export interface HeldWork {
+  reason: 'cap' | 'pause'
+  /** image captions not requested */
+  captions: number
+  /** embedding inputs not requested */
+  embeddings: number
 }
 
 export interface Dataset {
