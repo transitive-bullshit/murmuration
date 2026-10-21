@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 
 import type { Inflection } from '../../shared/types'
 import { linearToHex } from '../data/color'
@@ -17,15 +17,46 @@ import { selectBangers } from '../layouts/bangers'
 import { median } from '../stats'
 import { VIEWS, useApp, type AnatomyGroup } from '../store'
 import { relLabel } from './cards'
+import { COMPACT, useMedia } from './useMedia'
 
 export function ViewPanel({ model }: { model: Model }) {
   const view = useApp((s) => s.view)
   const meta = VIEWS.find((v) => v.id === view)!
-  const wide = useWide()
-  const [open, setOpen] = useState(true)
+  const wide = useMedia('(min-width: 1100px)')
+  const compact = useMedia(COMPACT)
+  // On phones the scene gets the screen; insights open on request.
+  const [open, setOpen] = useState(!compact)
   const expanded = wide || open
+  if (compact && !open)
+    return (
+      <aside className='pointer-events-none absolute left-4 top-[var(--header-h,72px)] z-20'>
+        <button
+          key={view}
+          type='button'
+          onClick={() => setOpen(true)}
+          className='glass pressable fade-in pointer-events-auto flex h-9 items-center gap-2 rounded-full pl-4 pr-3 text-[13px]'
+        >
+          <span className='font-display font-semibold tracking-[-0.01em] text-ink'>
+            {meta.label}
+          </span>
+          <span className='text-ink-3'>Insights</span>
+          <svg
+            viewBox='0 0 16 16'
+            className='size-3 text-ink-3'
+            fill='none'
+            stroke='currentColor'
+            strokeWidth='1.6'
+            strokeLinecap='round'
+            strokeLinejoin='round'
+            aria-hidden
+          >
+            <path d='m4 6 4 4 4-4' />
+          </svg>
+        </button>
+      </aside>
+    )
   return (
-    <aside className='pointer-events-none absolute bottom-28 left-4 top-[72px] z-20 flex w-[330px] max-w-[calc(100vw-32px)] flex-col'>
+    <aside className='pointer-events-none absolute bottom-28 left-4 top-[var(--header-h,72px)] z-20 flex w-[330px] max-w-[calc(100vw-32px)] flex-col'>
       <div
         key={view}
         className='glass fade-in pointer-events-auto flex max-h-full flex-col overflow-hidden rounded-3xl'
@@ -61,18 +92,6 @@ export function ViewPanel({ model }: { model: Model }) {
       </div>
     </aside>
   )
-}
-
-function useWide() {
-  const query = '(min-width: 1100px)'
-  const [wide, setWide] = useState(() => window.matchMedia(query).matches)
-  useEffect(() => {
-    const mq = window.matchMedia(query)
-    const on = () => setWide(mq.matches)
-    mq.addEventListener('change', on)
-    return () => mq.removeEventListener('change', on)
-  }, [])
-  return wide
 }
 
 function Section({

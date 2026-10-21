@@ -13,7 +13,7 @@ export function DetailPanel({ model }: { model: Model }) {
 
   return (
     <aside
-      className={`pointer-events-auto absolute bottom-24 right-4 top-[72px] z-30 flex w-[360px] flex-col transition-[opacity,transform] duration-300 ease-[var(--ease-drawer)] ${
+      className={`pointer-events-auto absolute bottom-24 right-4 top-[var(--header-h,72px)] z-30 flex w-[360px] max-w-[calc(100vw-32px)] flex-col transition-[opacity,transform] duration-300 ease-[var(--ease-drawer)] ${
         open
           ? 'translate-x-0 opacity-100'
           : 'pointer-events-none translate-x-6 opacity-0'

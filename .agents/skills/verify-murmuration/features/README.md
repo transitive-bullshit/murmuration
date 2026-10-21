@@ -29,7 +29,7 @@ Each feature file has an H1 title and a paragraph describing the user-visible be
 
 ## Features
 
-- [Views and URLs](./views-and-urls.md): six views by tab, number key, URL, Back/Forward and the remembered last view.
+- [Views and URLs](./views-and-urls.md): six views by tab, number key, URL, Back/Forward, the remembered last view, and the phone menu.
 - [Search](./search.md): tweet and like search, including image-caption matches, and people search in Orbit.
 - [Detail panels](./detail-panels.md): the tweet and person panels opened from search, lists and the scene.
 - [Growth inflections](./growth-inflections.md): follower inflections and their most likely causes.

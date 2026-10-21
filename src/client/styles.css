@@ -47,7 +47,10 @@ body,
 #root {
   height: 100%;
   margin: 0;
+  /* clip, not just hidden: nothing can scroll the app sideways (an
+     off-screen drawer, focus moving into view). */
   overflow: hidden;
+  overflow: clip;
   background: var(--color-void);
   color: var(--color-ink);
   font-family: var(--font-sans);

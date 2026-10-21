@@ -44,6 +44,6 @@ Proof means the user action and the resulting state: the URL after navigation, t
 ## Helpers
 
 - `verify.ts`: `doctor`, `list`, `run`.
-- `journeys/*.ts`: `views`, `search`, `growth`, `orbit`.
+- `journeys/*.ts`: `views`, `search`, `growth`, `orbit`, `phone` (resizes to 375×812 itself).
 - `scripts/smoke.ts` (`pnpm smoke`) and `scripts/lib/browser.ts`: the shared Playwright plumbing.
 - `scripts/shots.ts` (`pnpm shots`) regenerates the committed readme screenshots and `public/og.jpg`. Run it only when those images should change.

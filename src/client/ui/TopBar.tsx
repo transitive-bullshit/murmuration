@@ -6,50 +6,97 @@ import { fetchStatus, requestRebuild } from '../data/load'
 import { KIND, searchTweets, type Model } from '../data/model'
 import { VIEWS, useApp } from '../store'
 import { ControlsGuide } from './ControlsGuide'
+import { MobileMenu } from './MobileMenu'
 import { useSearchInput } from './useKeyboard'
+import { COMPACT, useMedia } from './useMedia'
 
+/**
+ * One row on wide screens. Below 1280px the view tabs drop to a centered
+ * second row; on phones a menu sheet holds the views, search and filters.
+ */
 export function TopBar({ model }: { model: Model }) {
+  const compact = useMedia(COMPACT)
+  const ref = useRef<HTMLElement>(null)
+  // Side panels start where the header ends (--header-h), however it wraps.
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const root = document.documentElement
+    const update = () =>
+      root.style.setProperty('--header-h', `${el.offsetHeight}px`)
+    update()
+    const observer = new ResizeObserver(update)
+    observer.observe(el)
+    return () => {
+      observer.disconnect()
+      root.style.removeProperty('--header-h')
+    }
+  }, [])
+  return (
+    <header
+      ref={ref}
+      className='pointer-events-none absolute inset-x-0 top-0 z-20 flex flex-wrap items-start justify-between gap-x-4 gap-y-2 p-4 xl:flex-nowrap'
+    >
+      <Brand model={model} className='flex-1 xl:flex-initial' />
+      {compact ? (
+        <MobileMenu model={model} />
+      ) : (
+        <>
+          <div className='pointer-events-none flex basis-full justify-center max-xl:order-last xl:basis-auto'>
+            <ViewSwitcher />
+          </div>
+          <div className='pointer-events-auto flex shrink-0 items-center gap-2'>
+            {import.meta.env.DEV && <StaleNotice />}
+            <Search model={model} />
+            <KindToggles />
+            <ControlsGuide />
+          </div>
+        </>
+      )}
+    </header>
+  )
+}
+
+/** Wordmark and account; stats truncate first, the handle and followers last. */
+export function Brand({
+  model,
+  className = ''
+}: {
+  model: Model
+  className?: string
+}) {
   const { meta } = model.ds
   return (
-    <header className='pointer-events-none absolute inset-x-0 top-0 z-20 flex items-start justify-between gap-4 p-4'>
-      <div className='pointer-events-auto flex min-w-0 items-center gap-3 pl-1 pt-1'>
-        <Mark />
-        <div className='min-w-0'>
-          <div className='font-display text-[17px] font-semibold leading-none tracking-[-0.02em] text-ink'>
-            murmuration
-          </div>
-          {/* When space runs out, tweets and likes truncate first; the handle
+    <div
+      className={`pointer-events-auto flex min-w-0 items-center gap-3 pl-1 pt-1 ${className}`}
+    >
+      <Mark />
+      <div className='min-w-0'>
+        <div className='font-display text-[17px] font-semibold leading-none tracking-[-0.02em] text-ink'>
+          murmuration
+        </div>
+        {/* When space runs out, tweets and likes truncate first; the handle
               and follower count go last. */}
-          <div className='mt-1 flex min-w-0 overflow-hidden whitespace-nowrap text-[11.5px] text-ink-3 tabular'>
-            <a
-              href={`https://x.com/${meta.account.handle}`}
-              target='_blank'
-              rel='noreferrer'
-              title='Open your X profile'
-              className='shrink-0 transition-colors hover:text-ink'
-            >
-              @{meta.account.handle}
-            </a>
-            <span className='shrink-0'>
-              &nbsp;· {fmtCompact(meta.counts.followers)} followers
-            </span>
-            <span className='min-w-0 truncate'>
-              &nbsp;· {fmtCompact(meta.counts.mine)} tweets ·{' '}
-              {fmtCompact(meta.counts.likes)} likes
-            </span>
-          </div>
+        <div className='mt-1 flex min-w-0 overflow-hidden whitespace-nowrap text-[11.5px] text-ink-3 tabular'>
+          <a
+            href={`https://x.com/${meta.account.handle}`}
+            target='_blank'
+            rel='noreferrer'
+            title='Open your X profile'
+            className='shrink-0 transition-colors hover:text-ink'
+          >
+            @{meta.account.handle}
+          </a>
+          <span className='shrink-0'>
+            &nbsp;· {fmtCompact(meta.counts.followers)} followers
+          </span>
+          <span className='min-w-0 truncate'>
+            &nbsp;· {fmtCompact(meta.counts.mine)} tweets ·{' '}
+            {fmtCompact(meta.counts.likes)} likes
+          </span>
         </div>
       </div>
-
-      <ViewSwitcher />
-
-      <div className='pointer-events-auto flex items-center gap-2'>
-        {import.meta.env.DEV && <StaleNotice />}
-        <Search model={model} />
-        <KindToggles />
-        <ControlsGuide />
-      </div>
-    </header>
+    </div>
   )
 }
 
@@ -138,7 +185,22 @@ function ViewSwitcher() {
   )
 }
 
-function Search({ model }: { model: Model }) {
+/**
+ * Searches tweets and likes (people in Orbit). In the header its results drop
+ * down; `inline` (the phone menu) lists them in place, full width.
+ */
+export function Search({
+  model,
+  inline = false,
+  autoFocus = false,
+  onPick
+}: {
+  model: Model
+  inline?: boolean
+  autoFocus?: boolean
+  /** called after flying to a result */
+  onPick?: () => void
+}) {
   const query = useApp((s) => s.query)
   const setQuery = useApp((s) => s.setQuery)
   const view = useApp((s) => s.view)
@@ -160,19 +222,29 @@ function Search({ model }: { model: Model }) {
 
   const isPeople = view === 'orbit'
   const results = useSearchResults(model, query, isPeople)
-  const open = focused && query.trim().length > 0
+  // Inline results stay up while there's a query: on touch screens, tapping
+  // one blurs the field first.
+  const open = (inline || focused) && query.trim().length > 0
 
   const pick = (k: number) => {
     const r = results.items[k]
     if (!r) return
     flyTo({ type: isPeople ? 'person' : 'tweet', index: r })
     inputRef.current?.blur()
+    onPick?.()
   }
 
   return (
     <div className='relative'>
-      {/* Narrow until wide screens, so the header's stats keep their room. */}
-      <label className='glass group flex h-9 w-[200px] min-[1500px]:w-[clamp(200px,22vw,290px)] items-center gap-2 rounded-full px-3 text-[12.5px] transition-[border-color] focus-within:border-white/20'>
+      {/* Narrow until wide screens, so the header's stats keep their room.
+          16px text inline, so phones don't zoom in on focus. */}
+      <label
+        className={`glass group flex items-center gap-2 rounded-full px-3 transition-[border-color] focus-within:border-white/20 ${
+          inline
+            ? 'h-11 w-full px-4 text-[16px]'
+            : 'h-9 w-[200px] text-[12.5px] min-[1500px]:w-[clamp(200px,22vw,290px)]'
+        }`}
+      >
         <svg
           viewBox='0 0 16 16'
           className='size-3.5 shrink-0 text-ink-3'
@@ -185,6 +257,7 @@ function Search({ model }: { model: Model }) {
         </svg>
         <input
           ref={inputRef}
+          autoFocus={autoFocus}
           value={draft}
           onChange={(e) => {
             setDraft(e.target.value)
@@ -217,14 +290,18 @@ function Search({ model }: { model: Model }) {
             {fmtInt(results.total)}
           </span>
         ) : (
-          <kbd className='shrink-0 rounded border border-white/10 px-1.5 py-px font-sans text-[10px] text-ink-4'>
-            /
-          </kbd>
+          !inline && (
+            <kbd className='shrink-0 rounded border border-white/10 px-1.5 py-px font-sans text-[10px] text-ink-4'>
+              /
+            </kbd>
+          )
         )}
       </label>
       {open && results.items.length > 0 && (
         <div
-          className='glass-strong fade-in absolute right-0 top-11 z-50 w-[380px] overflow-hidden rounded-2xl p-1.5'
+          className={`glass-strong fade-in overflow-hidden rounded-2xl p-1.5 ${
+            inline ? 'mt-2' : 'absolute right-0 top-11 z-50 w-[380px]'
+          }`}
           style={{ animationDuration: '160ms' }}
         >
           {results.items.map((r, k) => (
@@ -244,7 +321,8 @@ function Search({ model }: { model: Model }) {
             </button>
           ))}
           <div className='px-3 pb-1 pt-1.5 text-[10.5px] text-ink-4'>
-            {fmtInt(results.total)} matches · ↑↓ to move · ↵ to fly there
+            {fmtInt(results.total)} matches ·{' '}
+            {inline ? 'tap one to fly there' : '↑↓ to move · ↵ to fly there'}
           </div>
         </div>
       )}
@@ -361,7 +439,7 @@ const KINDS = [
   { label: 'Saved', color: KIND_HEX.bookmark }
 ] as const
 
-function KindToggles() {
+export function KindToggles() {
   const kinds = useApp((s) => s.kinds)
   const toggle = useApp((s) => s.toggleKind)
   const media = useApp((s) => s.mediaPreviews)
